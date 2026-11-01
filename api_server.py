@@ -34,11 +34,13 @@ from memory.redis_iris import (
     GRID_SIZE_X,
     GRID_SIZE_Y,
     REDIS_BACKEND,
+    get_agent,
     get_all_agents,
     get_recent_mission_logs,
     get_survivor,
     log_mission_event,
     redis_client,
+    set_agent,
 )
 
 def _wandb_logged_in() -> bool:
@@ -291,6 +293,34 @@ def grid_edit(request: CellEditRequest):
     if not (0 <= request.x < GRID_SIZE_X and 0 <= request.y < GRID_SIZE_Y):
         raise HTTPException(status_code=400, detail="cell outside grid")
     return {"result": edit_cell(request.x, request.y, request.tool), "grid_state": grid_state()}
+
+
+class AssignRequest(BaseModel):
+    agent_id: str
+    survivor_id: str
+
+
+@app.post("/assign")
+def assign(request: AssignRequest):
+    """Manual order from the dashboard chat: the agent drops its task and heads
+    for this survivor; the field-agent loop plans the route."""
+    agent_id = request.agent_id.strip().upper()
+    survivor_id = request.survivor_id.strip()
+    agent = get_agent(agent_id)
+    survivor = get_survivor(survivor_id)
+    if not agent:
+        result = {"assigned": False, "reason": f"No agent {agent_id}"}
+    elif not survivor:
+        result = {"assigned": False, "reason": f"No survivor {survivor_id}"}
+    elif survivor.get("status") in ("rescued", "lost"):
+        result = {"assigned": False, "reason": f"{survivor_id} is already {survivor['status']}"}
+    else:
+        cell = int(survivor["y"]) * GRID_SIZE_X + int(survivor["x"])
+        set_agent(agent_id, {**agent, "target_survivor_id": survivor_id, "target_cell": cell, "path": [],
+                             "status": f"Ordered to {survivor_id}", "thought": f"Command order: proceed to {survivor_id}."})
+        log_mission_event("manual_assignment", {"agent_id": agent_id, "survivor_id": survivor_id})
+        result = {"assigned": True, "agent_id": agent_id, "survivor_id": survivor_id}
+    return {"result": result, "grid_state": grid_state()}
 
 
 @app.post("/commander/plan")

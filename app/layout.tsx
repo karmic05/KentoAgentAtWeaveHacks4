@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import { CopilotKit } from "@copilotkit/react-core";
 import { Geist, Geist_Mono } from "next/font/google";
-import "@copilotkit/react-ui/styles.css";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,10 +18,6 @@ export const metadata: Metadata = {
     "Autonomous multi-agent disaster response: Snowflake + dbt data, Redis hot memory, a LlamaIndex commander and tactical field agents.",
 };
 
-// The CopilotKit runtime needs a working LLM key, so the provider (and its
-// /api/copilotkit calls) only mounts when the Copilot is explicitly enabled.
-const COPILOT_ENABLED = process.env.NEXT_PUBLIC_COPILOT_ENABLED === "true";
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,7 +29,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full">
-        {COPILOT_ENABLED ? <CopilotKit runtimeUrl="/api/copilotkit" enableInspector={false} showDevConsole={false}>{children}</CopilotKit> : children}
+        {children}
       </body>
     </html>
   );

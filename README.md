@@ -21,7 +21,7 @@ Snowflake (Snowpark generators) ──► dbt (staging → marts) ──► Redi
                  │                                                  │
                  └──────── W&B Weave guardrails & traces ───────────┘
                                          │
-                       Next.js command center  (+ optional CopilotKit copilot)
+                     Next.js command center  +  Rescue Command chat
 ```
 
 ## How the hive works
@@ -91,8 +91,19 @@ Redis (`fakeredis`) and generates a scenario on startup.
 | `KENTO_SOURCE_REDIS_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | Redis Cloud fed by the Snowflake → dbt pipeline. Enables **Sync from Redis Cloud**. |
 | `FIELD_AGENT_USE_LLM=1` | LLM advisor for field agents. `FIELD_AGENT_LLM_PROVIDER` = `ollama` (default, keyless), `groq` (`GROQ_API_KEY`) or `openai` (`OPENAI_API_KEY`). `FIELD_AGENT_LLM_MODEL` overrides the model. |
 | `WANDB_API_KEY` | Turns on Weave tracing for the `kento-agent-hive` project. |
-| `NEXT_PUBLIC_COPILOT_ENABLED=true` | Mounts the CopilotKit Rescue Copilot. `COPILOT_LLM_PROVIDER` = `ollama` (default), `groq` or `openai`. |
+| `GROQ_API_KEY` | Optional. Makes the Rescue Command chat use Groq instead of the keyless Pollinations endpoint (faster). `CHAT_LLM_BASE_URL` / `CHAT_LLM_MODEL` point it at any OpenAI-compatible endpoint, such as a local Ollama. |
 | `NEXT_PUBLIC_KENTO_API` | Hive API for the dashboard, e.g. `http://127.0.0.1:8010`. Unset or unreachable means the in-browser engine is used. |
+
+## Rescue Command chat
+
+The chat bar gives orders in plain English, such as "assign B to S-03 and start", "new
+scenario with 9 survivors", "what is agent A doing?" or "drop a survivor at (4, 6)".
+
+Common commands are understood instantly in the browser. Anything else goes to an LLM
+through a serverless route (`app/api/chat/route.ts`) that needs no API key: it uses the free
+[Pollinations](https://pollinations.ai) endpoint, or Groq if `GROQ_API_KEY` is set. The
+model answers with tool calls (`assign_agent`, `trigger_aftershock`, `new_scenario` and so
+on), which the dashboard executes on the map.
 
 ## Dashboard
 

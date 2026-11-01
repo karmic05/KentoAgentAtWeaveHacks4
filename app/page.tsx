@@ -1,14 +1,13 @@
 "use client";
 
-import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CopilotBridge } from "./components/CopilotBridge";
+import { ChatPanel } from "./components/ChatPanel";
 import { type EditTool, type Flash, GridMap } from "./components/GridMap";
 import { AgentRoster, EventFeed, MetricsStrip, Panel, Pipeline, TriageQueue } from "./components/Panels";
+import type { ChatAction } from "./lib/commands";
 import { BrowserHive } from "./lib/engine";
 import { API_BASE_URL, type ApiResponse, type GridState, type Health, api, isActive } from "./lib/kento";
 
-const COPILOT_ENABLED = process.env.NEXT_PUBLIC_COPILOT_ENABLED === "true";
 const SPEEDS = [
   { label: "0.5×", ms: 900 },
   { label: "1×", ms: 450 },
@@ -101,6 +100,73 @@ export default function Home() {
   const step = useCallback(() => {
     run("/sim/step").catch(() => {});
   }, [run]);
+
+  // Carries out chat orders (from the instant parser or the AI's tool calls)
+  // through the same routes as the buttons, returning a sentence per action.
+  const executeActions = useCallback(
+    async (actions: ChatAction[]): Promise<string[]> => {
+      const results: string[] = [];
+      const autopilot = (on: boolean) =>
+        run("/sim/autopilot", { running: on, interval_ms: SPEEDS[speed].ms, aftershocks: state?.sim.aftershocks ?? true });
+      for (const action of actions) {
+        try {
+          switch (action.name) {
+            case "assign_agent": {
+              const r = (await run("/assign", action.args)).result as { assigned: boolean; reason?: string };
+              if (r.assigned) setSelectedAgentId(action.args.agent_id.toUpperCase());
+              results.push(r.assigned ? `Agent ${action.args.agent_id.toUpperCase()} is heading to ${action.args.survivor_id}.` : `Couldn't assign: ${r.reason}.`);
+              break;
+            }
+            case "start_autopilot":
+              await autopilot(true);
+              results.push("Autopilot running.");
+              break;
+            case "pause_autopilot":
+              await autopilot(false);
+              results.push("Autopilot paused.");
+              break;
+            case "step":
+              await run("/sim/step");
+              results.push("Advanced one tick.");
+              break;
+            case "trigger_aftershock": {
+              const r = (await run("/sim/aftershock")).result as { rubble_cells: number[]; new_survivor: string | null };
+              results.push(`Aftershock: ${r.rubble_cells.length} cells collapsed${r.new_survivor ? `, ${r.new_survivor} is buried` : ""}.`);
+              break;
+            }
+            case "new_scenario": {
+              const body = Object.fromEntries(Object.entries(action.args).filter(([, v]) => v != null));
+              const r = (await run("/scenario/reset", body)).result as { seed: number; survivors: number; agents: number };
+              results.push(`New disaster (seed ${r.seed}): ${r.survivors} survivors, ${r.agents} agents.`);
+              break;
+            }
+            case "run_commander": {
+              const r = (await run("/commander/plan")).result as { assignments: number };
+              results.push(`Commander assigned ${r.assignments} agent${r.assignments === 1 ? "" : "s"}.`);
+              break;
+            }
+            case "highlight_agent":
+              setSelectedAgentId(action.args.agent_id.toUpperCase());
+              results.push(`Highlighting agent ${action.args.agent_id.toUpperCase()}.`);
+              break;
+            case "drop_survivor":
+            case "toggle_rubble": {
+              const tool = action.name === "drop_survivor" ? "survivor" : "rubble";
+              const r = (await run("/grid/edit", { ...action.args, tool })).result as { changed: boolean; reason?: string; survivor_id?: string };
+              results.push(r.changed
+                ? tool === "survivor" ? `${r.survivor_id} reported at (${action.args.x}, ${action.args.y}).` : `Rubble toggled at (${action.args.x}, ${action.args.y}).`
+                : `Can't edit (${action.args.x}, ${action.args.y}): ${r.reason?.replaceAll("_", " ")}.`);
+              break;
+            }
+          }
+        } catch (err) {
+          results.push(`Failed: ${err instanceof Error ? err.message : String(err)}.`);
+        }
+      }
+      return results;
+    },
+    [run, speed, state?.sim.aftershocks],
+  );
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -324,6 +390,9 @@ export default function Home() {
         </div>
 
         <aside className="min-w-0 space-y-4">
+          <Panel title="Rescue command" aside={<span className="text-[10px] text-faint">chat with the hive</span>}>
+            <ChatPanel state={state} execute={executeActions} />
+          </Panel>
           <Panel title="Mission">
             <MetricsStrip metrics={metrics} />
           </Panel>
@@ -341,21 +410,7 @@ export default function Home() {
     </div>
   );
 
-  if (!COPILOT_ENABLED) return dashboard;
-
-  return (
-    <CopilotSidebar
-      defaultOpen={false}
-      clickOutsideToClose
-      labels={{
-        title: "Rescue Copilot",
-        initial: "Mission command online. Ask me to run the autopilot, trigger an aftershock, or explain what an agent is doing.",
-      }}
-    >
-      <CopilotBridge agents={agents} survivors={survivors} metrics={metrics} run={run} onSelectAgent={setSelectedAgentId} />
-      {dashboard}
-    </CopilotSidebar>
-  );
+  return dashboard;
 }
 
 function Chip({ ok, label, title }: { ok: boolean; label: string; title?: string }) {

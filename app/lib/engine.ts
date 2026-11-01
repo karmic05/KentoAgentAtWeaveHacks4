@@ -162,6 +162,9 @@ export class BrowserHive {
       case "/commander/plan":
         result = this.commanderPlan();
         break;
+      case "/assign":
+        result = this.assign(String(body.agent_id ?? ""), String(body.survivor_id ?? ""));
+        break;
       case "/scenario/sync-cloud":
         throw new Error("Redis Cloud sync needs the local Python API (see README)");
       default:
@@ -440,6 +443,21 @@ export class BrowserHive {
       return { changed: true, survivor_id: id };
     }
     return { changed: false, reason: `unknown tool ${tool}` };
+  }
+
+  /** Manual order from the dashboard or chat: the agent drops its task and heads for this survivor. */
+  assign(agentId: string, survivorId: string) {
+    const agent = this.agents.get(agentId.trim().toUpperCase());
+    if (!agent) return { assigned: false, reason: `No agent ${agentId}. Agents: ${[...this.agents.keys()].join(", ")}` };
+    const survivor = this.survivors.get(survivorId.trim());
+    if (!survivor) return { assigned: false, reason: `No survivor ${survivorId}` };
+    if (INACTIVE.has(survivor.status)) return { assigned: false, reason: `${survivor.id} is already ${survivor.status}` };
+    Object.assign(agent, {
+      target_survivor_id: survivor.id, target_cell: survivor.cell, path: [],
+      status: `Ordered to ${survivor.id}`, thought: `Command order: proceed to ${survivor.id}.`,
+    });
+    this.log("manual_assignment", { agent_id: agent.id, survivor_id: survivor.id });
+    return { assigned: true, agent_id: agent.id, survivor_id: survivor.id };
   }
 
   /** Strategic commander (browser version): nearest-idle assignment, resource selection and guarded dispatch. */

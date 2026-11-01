@@ -183,6 +183,8 @@ export function describeLog(entry: MissionLog): { tone: string; text: string } {
       return { tone: "muted", text: `Debris cleared at (${d.x}, ${d.y})` };
     case "survivor_reported":
       return { tone: "warn", text: `New ${d.trapped ? "trapped" : "visible"} survivor ${survivor} reported at (${d.x}, ${d.y})` };
+    case "manual_assignment":
+      return { tone: "agent", text: `Command: Agent ${d.agent_id} ordered to ${d.survivor_id}` };
     case "autopilot_error":
       return { tone: "danger", text: `Autopilot stopped: ${d.error}` };
     default:
