@@ -70,7 +70,7 @@ export function ChatPanel({
     }
 
     setBusy(true);
-    const pending = push({ role: "bot", text: "Thinking… (free hosted AI, usually 5–20 s)", pending: true });
+    const pending = push({ role: "bot", text: "Thinking…", pending: true });
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
