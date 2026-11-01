@@ -6,26 +6,14 @@ passable cells and registers them as agent:* hashes that the /grid-state API
 returns and the dashboard renders.
 """
 
-import json
-import time
 from typing import Any
 
 from agents.survivor_spawner import find_clear_grid_cells
-from memory.redis_iris import get_agent, get_all_agents, redis_client, set_agent
+from memory.redis_iris import get_agent, get_all_agents, log_mission_event, set_agent
 
 DEFAULT_AGENT_IDS = ("A", "B", "C")
 
 
-def _log_mission_event(event: str, data: dict[str, Any]) -> None:
-    timestamp_ns = time.time_ns()
-    redis_client.hset(
-        f"mission:log:{timestamp_ns}",
-        mapping={
-            "event": event,
-            "timestamp_ns": timestamp_ns,
-            "data": json.dumps(data, default=str),
-        },
-    )
 
 
 def _existing_agent_ids() -> set[str]:
@@ -71,7 +59,7 @@ def spawn_agents(agent_ids: list[str] | None = None) -> dict[str, Any]:
 
     result = {"spawned": spawned, "agents": get_all_agents()}
     if spawned:
-        _log_mission_event("rescue_agents_spawned", {"agent_ids": [a["id"] for a in spawned]})
+        log_mission_event("rescue_agents_spawned", {"agent_ids": [a["id"] for a in spawned]})
 
     return result
 

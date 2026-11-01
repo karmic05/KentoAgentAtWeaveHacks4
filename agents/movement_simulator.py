@@ -1,4 +1,3 @@
-import time
 from typing import Any
 
 from memory.redis_iris import (
@@ -6,6 +5,7 @@ from memory.redis_iris import (
     get_agent,
     get_all_agents,
     get_survivor,
+    log_mission_event,
     redis_client,
     set_agent,
     set_grid_node,
@@ -55,17 +55,9 @@ def _require_survivor(survivor_id: str) -> dict[str, str]:
 
 
 def _log_rescue_event(agent_id: str, survivor_id: str, cell: int, x: int, y: int) -> None:
-    redis_client.hset(
-        f"mission:log:{time.time_ns()}",
-        mapping={
-            "event": "survivor_rescued",
-            "agent_id": agent_id,
-            "survivor_id": survivor_id,
-            "cell": cell,
-            "x": x,
-            "y": y,
-            "timestamp_ns": time.time_ns(),
-        },
+    log_mission_event(
+        "survivor_rescued",
+        {"agent_id": agent_id, "survivor_id": survivor_id, "cell": cell, "x": x, "y": y},
     )
 
 

@@ -5,21 +5,11 @@ from typing import Any
 from agents.coordinator import orchestrate_rescue_operations
 from agents.movement_simulator import move_all_agents
 from evals.hive_metrics import calculate_hive_cycle_metrics, log_hive_cycle_evaluation
-from memory.redis_iris import GRID_SIZE_X, get_all_agents, get_survivor, redis_client
+from memory.redis_iris import GRID_SIZE_X, get_all_agents, get_survivor, log_mission_event, redis_client
 
 HIVE_STATUS_KEY = "hive:status"
 
 
-def _log_mission_event(event: str, data: dict[str, Any]) -> None:
-    timestamp_ns = time.time_ns()
-    redis_client.hset(
-        f"mission:log:{timestamp_ns}",
-        mapping={
-            "event": event,
-            "timestamp_ns": timestamp_ns,
-            "data": json.dumps(data, default=str),
-        },
-    )
 
 
 def get_active_survivors() -> list[dict[str, Any]]:
@@ -28,7 +18,7 @@ def get_active_survivors() -> list[dict[str, Any]]:
     for key in redis_client.scan_iter(match="live:survivor:*"):
         survivor_id = key.replace("live:survivor:", "", 1)
         survivor = get_survivor(survivor_id)
-        if not survivor or survivor.get("status") == "rescued":
+        if not survivor or survivor.get("status") in ("rescued", "lost"):
             continue
 
         x = int(survivor["x"])
@@ -53,7 +43,7 @@ def _agent_has_active_assignment(agent: dict[str, Any]) -> bool:
         return False
 
     survivor = get_survivor(str(target_survivor_id))
-    return bool(survivor and survivor.get("status") != "rescued")
+    return bool(survivor and survivor.get("status") not in ("rescued", "lost"))
 
 
 def get_idle_agents() -> list[dict[str, Any]]:
@@ -195,8 +185,8 @@ def run_autonomous_tick() -> dict[str, Any]:
         "complete": len(active_survivors_after) == 0,
     }
     status = _set_hive_status("complete" if result["complete"] else "running", result)
-    _log_mission_event("autonomous_hive_tick_completed", result)
-    _log_mission_event("autonomous_hive_cycle_evaluated", evaluation)
+    log_mission_event("autonomous_hive_tick_completed", result)
+    log_mission_event("autonomous_hive_cycle_evaluated", evaluation)
 
     return {
         "status": status,
@@ -208,7 +198,7 @@ def run_autonomous_hive_until_complete(max_ticks: int = 100, tick_sleep_seconds:
     tick_results = []
     started_at_ns = time.time_ns()
     redis_client.hset(HIVE_STATUS_KEY, mapping={"started_at_ns": started_at_ns, "state": "running"})
-    _log_mission_event("autonomous_hive_started", {"max_ticks": max_ticks, "started_at_ns": started_at_ns})
+    log_mission_event("autonomous_hive_started", {"max_ticks": max_ticks, "started_at_ns": started_at_ns})
 
     while len(get_active_survivors()) > 0 and len(tick_results) < max_ticks:
         tick_result = run_autonomous_tick()
@@ -221,9 +211,9 @@ def run_autonomous_hive_until_complete(max_ticks: int = 100, tick_sleep_seconds:
     if len(get_active_survivors()) > 0:
         redis_client.hset(HIVE_STATUS_KEY, mapping={"state": "paused_max_ticks"})
         final_status = get_hive_status()
-        _log_mission_event("autonomous_hive_paused_max_ticks", final_status)
+        log_mission_event("autonomous_hive_paused_max_ticks", final_status)
     else:
-        _log_mission_event("autonomous_hive_completed", final_status)
+        log_mission_event("autonomous_hive_completed", final_status)
 
     return {
         "status": final_status,

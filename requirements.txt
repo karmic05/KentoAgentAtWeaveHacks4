@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn>=0.30
+redis>=5
+fakeredis>=2.20
+python-dotenv>=1.0
+pydantic>=2
+llama-index-core>=0.12
+weave>=0.51
+# only needed for the Snowflake -> Redis injector (live_inject_loop.py)
+snowflake-connector-python>=3

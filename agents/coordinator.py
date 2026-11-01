@@ -18,7 +18,7 @@ def _get_all_active_survivors() -> list[dict[str, Any]]:
     for key in redis_client.scan_iter(match="live:survivor:*"):
         survivor_id = key.replace("live:survivor:", "", 1)
         survivor = get_survivor(survivor_id)
-        if not survivor or survivor.get("status") == "rescued":
+        if not survivor or survivor.get("status") in ("rescued", "lost"):
             continue
 
         x = int(survivor["x"])
@@ -43,7 +43,7 @@ def _has_active_assignment(agent: dict[str, Any]) -> bool:
         return False
 
     survivor = get_survivor(str(target_survivor_id))
-    return bool(survivor and survivor.get("status") != "rescued")
+    return bool(survivor and survivor.get("status") not in ("rescued", "lost"))
 
 
 def _get_idle_agents() -> list[dict[str, Any]]:
@@ -63,7 +63,7 @@ def _get_assigned_survivor_ids() -> set[str]:
 
 def find_nearest_idle_agent(survivor_id: str) -> dict[str, Any] | None:
     survivor = get_survivor(survivor_id)
-    if not survivor or survivor.get("status") == "rescued":
+    if not survivor or survivor.get("status") in ("rescued", "lost"):
         return None
 
     survivor_state = {

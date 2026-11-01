@@ -1,830 +1,371 @@
 "use client";
 
-import { useCopilotAction, useCopilotReadable } from "@copilotkit/react-core";
 import { CopilotSidebar } from "@copilotkit/react-ui";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CopilotBridge } from "./components/CopilotBridge";
+import { type EditTool, type Flash, GridMap } from "./components/GridMap";
+import { AgentRoster, EventFeed, MetricsStrip, Panel, Pipeline, TriageQueue } from "./components/Panels";
+import { BrowserHive } from "./lib/engine";
+import { API_BASE_URL, type ApiResponse, type GridState, type Health, api, isActive } from "./lib/kento";
 
-type Agent = {
-  id: string;
-  x: number;
-  y: number;
-  cell: number;
-  status: string;
-  targetSurvivorId: string;
-  targetCell: number | null;
-  path: number[];
-};
+const COPILOT_ENABLED = process.env.NEXT_PUBLIC_COPILOT_ENABLED === "true";
+const SPEEDS = [
+  { label: "0.5×", ms: 900 },
+  { label: "1×", ms: 450 },
+  { label: "2×", ms: 220 },
+];
 
-type Survivor = {
-  id: string;
-  x: number;
-  y: number;
-  cell: number;
-  status: string;
-};
-
-type GridCell = {
-  x: number;
-  y: number;
-  cell: number;
-  symbol: "." | "█" | "V" | "T";
-  node: Record<string, string>;
-};
-
-type SurvivorTelemetry = {
-  id: string;
-  x: number;
-  y: number;
-  cell: number;
-  status: string;
-};
-
-type AgentTelemetry = {
-  id: string;
-  x: number;
-  y: number;
-  cell: number;
-  status: string;
-  target_survivor_id?: string;
-  target_cell?: number | null;
-  path?: number[];
-};
-
-type MissionLogEntry = {
-  key: string;
-  event: string;
-  timestamp_ns: number;
-  data: unknown;
-};
-
-type GridStateResponse = {
-  cells?: GridCell[];
-  survivors?: SurvivorTelemetry[];
-  agents?: AgentTelemetry[];
-  mission_logs?: MissionLogEntry[];
-};
-
-type HiveDispatchResponse = {
-  agent?: AgentTelemetry;
-  agents?: AgentTelemetry[];
-  grid_state?: GridStateResponse;
-  result?: unknown;
-  status?: unknown;
-  tick?: unknown;
-};
-
-type AgentStatusActionResult =
-  | {
-      found: false;
-      agentId: string;
-      message: string;
-    }
-  | {
-      found: true;
-      agent: Agent;
-    };
-
-const GRID_SIZE = 10;
-const API_BASE_URL = "http://localhost:8000";
-
-function formatMissionLog(entry: MissionLogEntry): string {
-  if (typeof entry.data === "string") {
-    return `${entry.event}: ${entry.data}`;
-  }
-
-  return `${entry.event}: ${JSON.stringify(entry.data) ?? ""}`;
-}
-
-function AgentStatusCard({ result }: { result?: AgentStatusActionResult }) {
-  if (!result) {
-    return (
-      <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700 shadow-sm">
-        Loading agent status from Redis...
-      </div>
-    );
-  }
-
-  if (!result.found) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-sm">
-        <p className="font-semibold">Agent {result.agentId} not found</p>
-        <p className="mt-1">{result.message}</p>
-      </div>
-    );
-  }
-
-  const { agent } = result;
-  const hasTarget = agent.targetSurvivorId || agent.targetCell != null;
-
-  return (
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950 shadow-sm">
-      <div className="mb-3 flex items-center gap-3">
-        <span className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-600 bg-emerald-400 text-sm font-black text-zinc-950 shadow-[0_0_12px_rgba(16,185,129,0.45)]">
-          <span className="absolute -top-1 h-2 w-2 rounded-full bg-emerald-700" />
-          {agent.id}
-        </span>
-        <div>
-          <p className="font-bold">Agent {agent.id}</p>
-          <p className="text-xs text-emerald-800">{agent.status}</p>
-        </div>
-      </div>
-
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
-        <dt className="font-semibold">Position</dt>
-        <dd>
-          ({agent.x}, {agent.y})
-        </dd>
-
-        <dt className="font-semibold">Cell</dt>
-        <dd>{agent.cell}</dd>
-
-        <dt className="font-semibold">Target Survivor</dt>
-        <dd>{agent.targetSurvivorId || "None"}</dd>
-
-        <dt className="font-semibold">Target Cell</dt>
-        <dd>{agent.targetCell ?? "None"}</dd>
-
-        <dt className="font-semibold">Remaining Path</dt>
-        <dd>{agent.path.length} cells</dd>
-      </dl>
-
-      <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs text-emerald-900">
-        {hasTarget
-          ? `Agent ${agent.id} is assigned and tracking Redis-backed movement state.`
-          : `Agent ${agent.id} is idle and available for assignment.`}
-      </p>
-    </div>
-  );
-}
-
+type Mode = "probing" | "remote" | "browser";
 
 export default function Home() {
-  // The CopilotKit chat needs an LLM-backed agent (OPENAI_API_KEY). Only mount
-  // the sidebar when explicitly enabled, so the data dashboard still renders
-  // when no LLM key is configured (otherwise useAgent throws and crashes the page).
-  const COPILOT_ENABLED = process.env.NEXT_PUBLIC_COPILOT_ENABLED === "true";
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [survivors, setSurvivors] = useState<Survivor[]>([]);
-  const [gridCells, setGridCells] = useState<GridCell[]>([]);
-  const [missionLogs, setMissionLogs] = useState<MissionLogEntry[]>([]);
+  const [mode, setMode] = useState<Mode>(API_BASE_URL ? "probing" : "browser");
+  // Cheap to build (one procedural scenario), so always keep one ready as the fallback.
+  const [browserHive] = useState(() => new BrowserHive());
+  const [state, setState] = useState<GridState | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState<Health | null>(null);
+  const [offline, setOffline] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [apiConnectionIssue, setApiConnectionIssue] = useState<string | null>(null);
+  const [tool, setTool] = useState<EditTool>("none");
+  const [speed, setSpeed] = useState(1);
+  const [seed, setSeed] = useState("");
 
-  const applyGridState = useCallback((data: GridStateResponse) => {
-    setGridCells(data.cells ?? []);
-    setAgents(
-      (data.agents ?? []).map((agent) => ({
-        id: agent.id,
-        x: Number(agent.x),
-        y: Number(agent.y),
-        cell: Number(agent.cell),
-        status: agent.status,
-        targetSurvivorId: agent.target_survivor_id ?? "",
-        targetCell: agent.target_cell ?? null,
-        path: agent.path ?? [],
-      })),
-    );
-    setSurvivors(
-      (data.survivors ?? []).map((s) => ({
-        id: s.id,
-        x: s.x,
-        y: s.y,
-        cell: s.cell,
-        status: s.status,
-      })),
-    );
-    setMissionLogs(data.mission_logs ?? []);
-  }, []);
+  const running = state?.sim.running ?? false;
 
-  const loadGridState = useCallback(async () => {
+  const status = mode === "browser" ? browserHive.health() : remoteStatus;
+
+  // Prefer the full Python stack when it's reachable, else run in the browser.
+  useEffect(() => {
+    if (mode !== "probing") return;
+    api<never>("/health")
+      .then((data) => {
+        setRemoteStatus(data as unknown as Health);
+        setMode("remote");
+      })
+      .catch(() => setMode("browser"));
+  }, [mode]);
+
+  const refresh = useCallback(async () => {
+    if (mode === "browser") {
+      setState(browserHive.gridState());
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE_URL}/grid-state`);
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-
-      const data = (await res.json()) as GridStateResponse;
-      applyGridState(data);
-      setApiConnectionIssue(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to reach FastAPI";
-      setApiConnectionIssue(message);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      setState(await res.json());
+      setOffline(null);
+    } catch (err) {
+      setOffline(err instanceof Error ? err.message : "unreachable");
     }
-  }, [applyGridState]);
+  }, [mode, browserHive]);
 
-  const callApiAndApplyGridState = useCallback(
-    async (path: string, init?: RequestInit): Promise<HiveDispatchResponse> => {
-      const res = await fetch(`${API_BASE_URL}${path}`, init);
-      if (!res.ok) throw new Error(`API request failed: ${res.status}`);
-
-      const data = (await res.json()) as HiveDispatchResponse;
-      if (data.grid_state) {
-        applyGridState(data.grid_state);
-      } else {
-        await loadGridState();
-      }
-
+  const run = useCallback(async (path: string, body: unknown = {}): Promise<ApiResponse> => {
+    setBusy(path);
+    setError(null);
+    try {
+      const data = mode === "browser" ? browserHive.request(path, body as Record<string, unknown>) : await api(path, body);
+      if (data.grid_state) setState(data.grid_state);
       return data;
-    },
-    [applyGridState, loadGridState],
-  );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    } finally {
+      setBusy(null);
+    }
+  }, [mode, browserHive]);
+
+  // Poll fast while the autopilot is moving agents, slowly otherwise.
+  useEffect(() => {
+    if (mode === "probing") return;
+    const first = setTimeout(refresh, 0);
+    const timer = setInterval(refresh, running ? (mode === "browser" ? 120 : 350) : 1500);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [refresh, running, mode]);
 
   useEffect(() => {
-    const initialLoad = setTimeout(loadGridState, 0);
-    const interval = setInterval(loadGridState, 2000);
+    if (mode !== "remote") return;
+    api<never>("/health")
+      .then((data) => setRemoteStatus(data as unknown as Health))
+      .catch(() => setRemoteStatus(null));
+  }, [mode, offline, state?.llm.active]);
 
-    return () => {
-      clearTimeout(initialLoad);
-      clearInterval(interval);
-    };
-  }, [loadGridState]);
+  const toggleAutopilot = useCallback(() => {
+    run("/sim/autopilot", { running: !running, interval_ms: SPEEDS[speed].ms, aftershocks: state?.sim.aftershocks ?? true }).catch(() => {});
+  }, [run, running, speed, state?.sim.aftershocks]);
 
-  const missionSummary = useMemo(
-    () => ({
-      numberOfAgents: agents.length,
-      numberOfSurvivors: survivors.length,
-      numberOfMissionLogs: missionLogs.length,
-      missionStatus: `${agents.length} Agents Active`,
-      assignedAgents: agents
-        .filter((agent) => agent.targetCell != null)
-        .map((agent) => ({
-          id: agent.id,
-          task: agent.status,
-          targetSurvivorId: agent.targetSurvivorId,
-          targetCell: agent.targetCell,
-        })),
-    }),
-    [agents, survivors, missionLogs],
-  );
+  const step = useCallback(() => {
+    run("/sim/step").catch(() => {});
+  }, [run]);
 
-  const copilotAgents = useMemo(
-    () =>
-      agents.map((agent) => ({
-        id: agent.id,
-        x: agent.x,
-        y: agent.y,
-        cell: agent.cell,
-        status: agent.status,
-        targetSurvivorId: agent.targetSurvivorId || null,
-        targetCell: agent.targetCell,
-        remainingPathLength: agent.path.length,
-      })),
-    [agents],
-  );
-
-  const copilotSurvivors = useMemo(
-    () =>
-      survivors.map((survivor) => ({
-        id: survivor.id,
-        x: survivor.x,
-        y: survivor.y,
-        cell: survivor.cell,
-        status: survivor.status,
-      })),
-    [survivors],
-  );
-
-  const copilotGridSummary = useMemo(
-    () => ({
-      totalCells: gridCells.length,
-      clearCells: gridCells.filter((cell) => cell.symbol === ".").length,
-      rubbleCells: gridCells.filter((cell) => cell.symbol === "█").length,
-      visibleSurvivorCells: gridCells.filter((cell) => cell.symbol === "V").length,
-      trappedSurvivorCells: gridCells.filter((cell) => cell.symbol === "T").length,
-    }),
-    [gridCells],
-  );
-
-  const copilotRecentMissionLogs = useMemo(
-    () =>
-      [...missionLogs]
-        .reverse()
-        .slice(0, 5)
-        .map((entry) => ({
-          event: entry.event,
-          timestamp_ns: entry.timestamp_ns,
-        })),
-    [missionLogs],
-  );
-
-  useCopilotAction({
-    name: "highlightAgent",
-    description:
-      "Highlight a rescue agent on the grid. Supported agentId values: A, B, or C.",
-    parameters: [
-      {
-        name: "agentId",
-        type: "string",
-        description: 'Agent ID: "A", "B", or "C"',
-        required: true,
-      },
-    ],
-    handler: ({ agentId }) => {
-      if (agents.some((agent) => agent.id === agentId)) {
-        setSelectedAgentId(agentId);
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggleAutopilot();
+      } else if (event.key === "s" && !running) {
+        step();
+      } else if (event.key === "Escape") {
+        setTool("none");
+        setSelectedAgentId(null);
       }
-    },
-  });
-
-  useCopilotAction({
-    name: "orchestrateRescueOperation",
-    description:
-      "Run the autonomous Redis-backed hive until no active survivors remain and refresh mission logs.",
-    parameters: [],
-    handler: async () => {
-      const data = await callApiAndApplyGridState("/autonomous-hive/run", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          max_ticks: 100,
-          tick_sleep_seconds: 0,
-        }),
-      });
-
-      if (data.result && typeof data.result === "object" && "status" in data.result) {
-        return data.result.status;
-      }
-
-      return data.result;
-    },
-  });
-
-  useCopilotAction({
-    name: "assignNearestAgent",
-    description:
-      "Assign the nearest idle Redis-backed agent to a survivor and refresh mission logs.",
-    parameters: [
-      {
-        name: "survivorId",
-        type: "string",
-        description: "Survivor ID from Redis Iris telemetry",
-        required: true,
-      },
-    ],
-    handler: async ({ survivorId }) => {
-      if (!survivors.some((survivor) => survivor.id === survivorId)) return;
-
-      const data = await callApiAndApplyGridState("/assign-nearest-agent", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          survivor_id: survivorId,
-        }),
-      });
-
-      if (
-        data.result !== null &&
-        typeof data.result === "object" &&
-        "agent_id" in data.result
-      ) {
-        setSelectedAgentId(String(data.result.agent_id));
-      }
-
-      return data.result;
-    },
-  });
-
-  useCopilotAction({
-    name: "spawnRandomSurvivors",
-    description:
-      "Spawn random visible or trapped survivors into clear Redis-backed grid cells.",
-    parameters: [
-      {
-        name: "count",
-        type: "number",
-        description: "Number of survivors to spawn",
-        required: true,
-      },
-    ],
-    handler: async ({ count }) => {
-      const spawnCount = Math.max(1, Math.floor(Number(count)));
-      const data = await callApiAndApplyGridState("/spawn-survivors", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          count: spawnCount,
-        }),
-      });
-
-      return data.result;
-    },
-  });
-
-  useCopilotAction({
-    name: "advanceSimulation",
-    description:
-      "Advance all Redis-backed agents by one simulation tick and refresh mission logs.",
-    parameters: [],
-    handler: async () => {
-      const data = await callApiAndApplyGridState("/tick-all-agents", {
-        method: "POST",
-      });
-
-      if (data.tick && typeof data.tick === "object" && "status" in data.tick) {
-        return data.tick.status;
-      }
-
-      return data.tick;
-    },
-  });
-
-  useCopilotAction({
-    name: "showMissionStatus",
-    description:
-      "Fetch the current Redis-backed mission status, including agents, survivors, grid cells, and mission logs.",
-    parameters: [],
-    handler: async () => {
-      const data = await callApiAndApplyGridState("/autonomous-hive/status");
-
-      return data.status;
-    },
-  });
-
-  useCopilotAction({
-    name: "showAgentStatus",
-    description:
-      "Render a status card in chat for a Redis-backed rescue agent. Supported agentId values: A, B, or C.",
-    parameters: [
-      {
-        name: "agentId",
-        type: "string",
-        description: 'Agent ID: "A", "B", or "C"',
-        required: true,
-      },
-    ],
-    handler: async ({ agentId }) => {
-      const res = await fetch(`${API_BASE_URL}/grid-state`);
-      if (!res.ok) throw new Error(`Failed to load agent status: ${res.status}`);
-
-      const data = (await res.json()) as GridStateResponse;
-      applyGridState(data);
-
-      const normalizedAgentId = agentId.trim().toUpperCase();
-      const agent = data.agents?.find((item) => item.id === normalizedAgentId);
-      if (!agent) {
-        return {
-          found: false,
-          agentId: normalizedAgentId,
-          message: "No matching agent was found in Redis.",
-        } satisfies AgentStatusActionResult;
-      }
-
-      setSelectedAgentId(normalizedAgentId);
-
-      return {
-        found: true,
-        agent: {
-          id: agent.id,
-          x: Number(agent.x),
-          y: Number(agent.y),
-          cell: Number(agent.cell),
-          status: agent.status,
-          targetSurvivorId: agent.target_survivor_id ?? "",
-          targetCell: agent.target_cell ?? null,
-          path: agent.path ?? [],
-        },
-      } satisfies AgentStatusActionResult;
-    },
-    render: ({ result }) => (
-      <AgentStatusCard result={result as AgentStatusActionResult | undefined} />
-    ),
-  });
-
-  useCopilotAction({
-    name: "runFieldAgents",
-    description:
-      "Run the autonomous field rescue agents (tactical observe-think-act loop: self-assign, reroute around rubble, rescue, request backup) until all survivors are rescued. Pauses the live data loop during the run.",
-    parameters: [],
-    handler: async () => {
-      const data = await callApiAndApplyGridState("/field-agents/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ max_ticks: 60 }),
-      });
-      return data.result;
-    },
-  });
-
-  useCopilotReadable({
-    description: "Compact rescue agent statuses from Redis",
-    value: copilotAgents,
-  });
-
-  useCopilotReadable({
-    description: "Compact survivor statuses from Redis",
-    value: copilotSurvivors,
-  });
-
-  useCopilotReadable({
-    description: "Compact disaster grid summary from Redis",
-    value: copilotGridSummary,
-  });
-
-  useCopilotReadable({
-    description: "Currently highlighted agent ID on the command grid",
-    value: selectedAgentId,
-  });
-
-  useCopilotReadable({
-    description: "Recent mission log event names from Redis, newest first",
-    value: copilotRecentMissionLogs,
-  });
-
-  useCopilotReadable({
-    description: "High-level mission summary and active assignments",
-    value: missionSummary,
-  });
-
-  function getCellContent(index: number): ReactNode {
-    const agent = agents.find((item) => item.cell === index);
-    if (agent) {
-      return (
-        <span
-          aria-label={`Agent ${agent.id}`}
-          title={`Agent ${agent.id}`}
-          className="relative flex h-5 w-5 items-center justify-center rounded-[5px] border border-emerald-200 bg-emerald-400 text-[10px] font-black leading-none text-zinc-950 shadow-[0_0_10px_rgba(52,211,153,0.55)]"
-        >
-          <span className="absolute -top-1 h-1.5 w-1.5 rounded-full bg-emerald-200" />
-          <span className="absolute -left-1 top-1.5 h-1.5 w-1 rounded-sm bg-emerald-300" />
-          <span className="absolute -right-1 top-1.5 h-1.5 w-1 rounded-sm bg-emerald-300" />
-          {agent.id}
-        </span>
-      );
     }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleAutopilot, step, running]);
 
-    const cell = gridCells.find((item) => item.cell === index);
+  const agents = useMemo(() => state?.agents ?? [], [state]);
+  const survivors = useMemo(() => (state?.survivors ?? []).filter((s) => isActive(s.status)), [state]);
+  const backupCells = useMemo(
+    () => new Set((state?.backups ?? []).map((b) => Number(b.cell)).filter((c) => !Number.isNaN(c))),
+    [state],
+  );
+  // Recent rescues/losses become one-shot bursts on the map. The log key is the
+  // React key, so each event animates once even though polling repeats it.
+  const flashes = useMemo<Flash[]>(() => {
+    const newest = Math.max(0, ...(state?.mission_logs ?? []).map((l) => l.timestamp_ns));
+    return (state?.mission_logs ?? [])
+      .filter((l) => (l.event === "field_agent_rescue" || l.event === "survivor_lost") && newest - l.timestamp_ns < 1.5e9)
+      .map((l) => {
+        const d = l.data as { x?: number; y?: number };
+        return { key: l.key, cell: Number(d.y) * 10 + Number(d.x), tone: l.event === "survivor_lost" ? "danger" : "ok" } as Flash;
+      })
+      .filter((f) => !Number.isNaN(f.cell));
+  }, [state]);
+  const metrics = state?.metrics ?? {};
+  const complete = state != null && (metrics.total ?? 0) > 0 && (metrics.active ?? 0) === 0;
 
-    if (cell?.symbol === "T") return "T";
-    if (cell?.symbol === "V") return "V";
-    if (cell?.symbol === "█") return "█";
-
-    return ".";
-  }
-
-  function getCellClasses(index: number): string {
-    const agent = agents.find((item) => item.cell === index);
-    const isSelected = agent != null && agent.id === selectedAgentId;
-    const gridCell = gridCells.find((item) => item.cell === index);
-
-    const base =
-      "rounded border flex items-center justify-center text-xs transition-colors ";
-
-    if (agent) {
-      return (
-        base +
-        (isSelected
-          ? "border-2 border-sky-400 ring-2 ring-sky-400/70 bg-emerald-950 text-emerald-100 font-semibold shadow-[0_0_12px_rgba(56,189,248,0.35)]"
-          : "border-emerald-500/70 bg-emerald-950/90 text-emerald-300")
-      );
-    }
-
-    if (gridCell?.symbol === "T") {
-      return base + "border-red-500/80 bg-red-950/80 text-red-200 font-bold";
-    }
-
-    if (gridCell?.symbol === "V") {
-      return base + "border-amber-500/80 bg-amber-950/90 text-amber-200 font-bold";
-    }
-
-    if (gridCell?.symbol === "█") {
-      return base + "border-zinc-500 bg-zinc-800 text-zinc-100 font-bold";
-    }
-
-    return base + "border-zinc-800 bg-zinc-950 text-zinc-600";
-  }
-
-  const content = (
-    <main className="h-screen w-screen flex bg-zinc-950 text-zinc-100">
-        <section className="flex-1 p-6 border-r border-zinc-800 flex flex-col min-w-0">
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">
-                KentoAgent
-              </h1>
-              <p className="text-sm text-zinc-400">
-                Multi-agent disaster response simulation
-              </p>
-              {apiConnectionIssue && (
-                <p className="mt-2 rounded-md border border-amber-700/60 bg-amber-950/40 px-2 py-1 text-xs text-amber-200">
-                  Reconnecting to FastAPI backend: {apiConnectionIssue}
-                </p>
-              )}
-            </div>
-
-            <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
-              <p className="font-medium text-zinc-300 mb-1">Legend</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <span className="inline-flex items-center gap-1">
-                  <span className="relative inline-flex h-4 w-4 items-center justify-center rounded border border-emerald-200 bg-emerald-400 text-[8px] font-black text-zinc-950">
-                    A
-                  </span>
-                  Agent
-                </span>
-                <span>V Visible survivor</span>
-                <span>T Trapped survivor</span>
-                <span>█ Rubble</span>
-                <span>. Clear</span>
-              </div>
-            </div>
+  const dashboard = (
+    <div className="min-h-screen bg-bg text-text">
+      <header className="border-b border-line">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 md:px-6">
+          <div className="flex items-baseline gap-3">
+            <h1 className="font-mono text-lg font-bold tracking-[0.2em]">KENTO</h1>
+            <p className="text-sm text-muted">Autonomous disaster-response hive</p>
           </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px]">
+            <Chip
+              ok={!offline}
+              label={offline ? "API offline" : mode === "browser" ? "engine · in-browser" : `redis · ${status?.redis ?? "…"}`}
+            />
+            <Chip
+              ok={Boolean(state?.llm.active)}
+              label={state?.llm.active ? `brain · ${state.llm.provider ?? "llm"} ${state.llm.model}` : "brain · deterministic"}
+              title={state?.llm.reason || (state?.llm.configured ? "" : "Set FIELD_AGENT_USE_LLM=1 and OPENAI_API_KEY to enable LLM-guided agents")}
+            />
+            <Chip
+              ok={state?.sim.source === "redis-cloud"}
+              label={state?.sim.source === "redis-cloud" ? "source · Snowflake snapshot" : `source · procedural #${state?.sim.seed ?? "–"}`}
+            />
+          </div>
+        </div>
+      </header>
 
-          <div className="flex-1 min-h-0 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
-            <div className="grid grid-cols-10 gap-1 h-full">
-              {Array.from({ length: GRID_SIZE * GRID_SIZE }).map((_, index) => (
-                <div key={index} className={getCellClasses(index)}>
-                  {getCellContent(index)}
-                </div>
-              ))}
+      <main className="mx-auto grid max-w-[1500px] gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="min-w-0 space-y-4">
+          {mode === "browser" && (
+            <div className="rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-muted">
+              <span className="font-medium text-accent">Live demo.</span> The hive is running entirely in your
+              browser with the deterministic planner. The full stack (Snowflake → dbt → Redis, the LlamaIndex
+              commander, the local Ollama LLM advisor, and Weave tracing) runs locally.{" "}
+              <a
+                className="text-accent underline-offset-2 hover:underline"
+                href="https://github.com/karmic05/KentoAgentAtWeaveHacks4/tree/kento-command-center"
+              >
+                See the code on GitHub
+              </a>
+              .
             </div>
-          </div>
-        </section>
+          )}
 
-        <aside className="w-[420px] shrink-0 p-6 bg-zinc-900 overflow-y-auto">
-          <h2 className="text-xl font-semibold">Mission Control</h2>
-          <p className="mt-2 text-sm text-zinc-400">
-            Live Redis Iris simulation telemetry
-          </p>
-
-          <p className="mt-4 text-sm text-zinc-300">
-            Selected Agent: {selectedAgentId ?? "None"}
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              onClick={() =>
-                callApiAndApplyGridState("/field-agents/run", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ max_ticks: 60 }),
-                }).catch(() => {})
-              }
-              className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-            >
-              Run Field Agents
-            </button>
-            <button
-              onClick={() =>
-                callApiAndApplyGridState("/field-agents/tick", { method: "POST" }).catch(() => {})
-              }
-              className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
-            >
-              Step
-            </button>
-            <button
-              onClick={() =>
-                callApiAndApplyGridState("/spawn-agents", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({}),
-                }).catch(() => {})
-              }
-              className="rounded-lg border border-zinc-600 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
-            >
-              Spawn Agents
-            </button>
-          </div>
-
-          <div className="mt-6 rounded-xl border border-zinc-700 p-4">
-            <p className="text-sm text-zinc-300">Mission Status</p>
-            <p className="mt-2 text-3xl font-bold">
-              {missionSummary.missionStatus}
-            </p>
-
-            <div className="mt-4 flex gap-4 text-sm">
-              <div>
-                <p className="text-zinc-500">Agents</p>
-                <p className="text-lg font-semibold text-zinc-200">
-                  {missionSummary.numberOfAgents}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-zinc-500">Survivors</p>
-                <p className="text-lg font-semibold text-zinc-200">
-                  {missionSummary.numberOfSurvivors}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-zinc-500">Grid Cells</p>
-                <p className="text-lg font-semibold text-zinc-200">
-                  {gridCells.length}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-zinc-500">Logs</p>
-                <p className="text-lg font-semibold text-zinc-200">
-                  {missionSummary.numberOfMissionLogs}
-                </p>
-              </div>
+          {offline && (
+            <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-3 text-sm text-warn">
+              Can&apos;t reach the hive API ({offline}). Start it with{" "}
+              <code className="font-mono text-xs">npm run api</code>.
             </div>
-          </div>
+          )}
 
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-zinc-300">Agents</h3>
-            <ul className="mt-2 space-y-2 text-sm">
-              {agents.map((agent) => (
-                <li
-                  key={agent.id}
-                  className={`rounded-lg border px-3 py-2 ${
-                    agent.id === selectedAgentId
-                      ? "border-sky-500/60 bg-sky-950/30"
-                      : "border-zinc-700 bg-zinc-950"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-zinc-200">
-                      Agent {agent.id}
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      cell {agent.cell}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-zinc-400">{agent.status}</p>
-                  {agent.targetCell != null && (
-                    <p className="mt-1 text-xs text-teal-400">
-                      Target {agent.targetSurvivorId || "unknown"} at cell{" "}
-                      {agent.targetCell}
+          <div className="mx-auto w-full max-w-[min(100%,calc(100vh-15rem))] min-w-[280px]">
+            <div className="relative">
+              <GridMap
+                cells={state?.cells ?? []}
+                agents={agents}
+                survivors={survivors}
+                backupCells={backupCells}
+                flashes={flashes}
+                selectedAgentId={selectedAgentId}
+                tool={tool}
+                moveMs={Math.min(SPEEDS[speed].ms, 450)}
+                onSelectAgent={setSelectedAgentId}
+                onCellClick={(x, y) =>
+                  run("/grid/edit", { x, y, tool }).then((data) => {
+                    const result = data.result as { changed?: boolean; reason?: string } | undefined;
+                    if (result && !result.changed) setError(`Can't edit (${x}, ${y}): ${result.reason?.replaceAll("_", " ")}`);
+                  }).catch(() => {})
+                }
+              />
+              {complete && !running && (
+                <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
+                  <div className="pointer-events-auto rounded-xl border border-ok/40 bg-[#07130f]/95 px-5 py-3 text-center shadow-2xl backdrop-blur">
+                    <p className="text-sm font-semibold text-ok">Mission complete</p>
+                    <p className="tabular mt-0.5 text-xs text-muted">
+                      {metrics.rescued}/{metrics.total} rescued · {metrics.lost} lost · {metrics.tick} ticks ·{" "}
+                      {metrics.distance} cells travelled
                     </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="mt-4">
-            <h3 className="text-sm font-medium text-zinc-300">
-              Survivors from Redis Iris
-            </h3>
-            <ul className="mt-2 space-y-2 text-sm">
-              {survivors.length === 0 && (
-                <li className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-400">
-                  No survivors loaded yet.
-                </li>
-              )}
-
-              {survivors.map((survivor) => (
-                <li
-                  key={survivor.id}
-                  className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-amber-200">
-                      {survivor.id}
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      cell {survivor.cell}
-                    </span>
                   </div>
-                  <p className="mt-1 text-amber-300/80">{survivor.status}</p>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="mt-6">
-            <h3 className="text-sm font-medium text-zinc-300">Mission Log</h3>
-            <ul className="mt-2 space-y-2 text-xs">
-              {missionLogs.length === 0 && (
-                <li className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-500">
-                  No mission logs in Redis yet.
-                </li>
+                </div>
               )}
-
-              {[...missionLogs].reverse().slice(0, 5).map((entry) => (
-                <li
-                  key={entry.key}
-                  className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-zinc-400"
-                >
-                  {formatMissionLog(entry)}
-                </li>
-              ))}
-            </ul>
+            </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="btn btn-primary min-w-28 justify-center" onClick={toggleAutopilot} disabled={complete && !running}>
+              {running ? "❚❚ Pause" : "▶ Autopilot"} <span className="kbd !border-[#04121c]/30 !text-[#04121c]/70">space</span>
+            </button>
+            <button type="button" className="btn" onClick={step} disabled={running || complete}>
+              Step <span className="kbd">s</span>
+            </button>
+            <div className="flex overflow-hidden rounded-lg border border-line-strong">
+              {SPEEDS.map((option, index) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  onClick={() => {
+                    setSpeed(index);
+                    if (running) run("/sim/autopilot", { running: true, interval_ms: option.ms, aftershocks: state?.sim.aftershocks ?? true }).catch(() => {});
+                  }}
+                  className={`px-2.5 py-1.5 font-mono text-xs ${speed === index ? "bg-accent/15 text-accent" : "bg-panel-2 text-muted hover:text-text"}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`btn ${state?.sim.aftershocks ? "btn-on" : ""}`}
+              onClick={() =>
+                run("/sim/autopilot", { running, interval_ms: SPEEDS[speed].ms, aftershocks: !(state?.sim.aftershocks ?? true) }).catch(() => {})
+              }
+              title="Random aftershocks collapse cells on the agents' planned routes while the autopilot runs"
+            >
+              Aftershocks {state?.sim.aftershocks ? "on" : "off"}
+            </button>
+            <button type="button" className="btn" onClick={() => run("/sim/aftershock").catch(() => {})}>
+              Trigger aftershock
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => run("/commander/plan").catch(() => {})}
+              disabled={busy === "/commander/plan"}
+              title="Run the LlamaIndex workflow: coordinate → route planning → guarded dispatch"
+            >
+              {busy === "/commander/plan" ? "Commander planning…" : "Run commander"}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-panel px-3 py-2.5">
+            <span className="text-[11px] uppercase tracking-wider text-faint">Scenario</span>
+            <input
+              value={seed}
+              onChange={(e) => setSeed(e.target.value.replace(/\D/g, "").slice(0, 7))}
+              placeholder="random seed"
+              aria-label="Scenario seed"
+              className="w-28 rounded-md border border-line-strong bg-panel-2 px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              className="btn"
+              onClick={() => run("/scenario/reset", seed ? { seed: Number(seed) } : {}).catch(() => {})}
+            >
+              New disaster
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => run("/scenario/sync-cloud").catch(() => {})}
+              disabled={!status?.cloud_source || busy === "/scenario/sync-cloud"}
+              title={status?.cloud_source ? "Load the latest Snowflake → dbt marts from Redis Cloud" : "Set KENTO_SOURCE_REDIS_* in .env"}
+            >
+              {busy === "/scenario/sync-cloud" ? "Syncing…" : "Sync from Redis Cloud"}
+            </button>
+            <span className="mx-1 hidden h-5 w-px bg-line-strong sm:block" />
+            <span className="text-[11px] uppercase tracking-wider text-faint">Edit map</span>
+            {(["rubble", "survivor"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`btn ${tool === option ? "btn-on" : ""}`}
+                onClick={() => setTool(tool === option ? "none" : option)}
+              >
+                {option === "rubble" ? "Toggle rubble" : "Drop survivor"}
+              </button>
+            ))}
+          </div>
+
+          {(error || tool !== "none") && (
+            <p className={`text-xs ${error ? "text-danger" : "text-muted"}`}>
+              {error ??
+                (tool === "rubble"
+                  ? "Click open ground to drop debris on the agents' routes, or rubble to clear it. Esc to stop."
+                  : "Click open ground for a visible survivor, or rubble to bury a trapped one. Esc to stop.")}
+            </p>
+          )}
+
+          <Panel title="Architecture · live data path">
+            <Pipeline health={status} sim={state?.sim ?? null} browser={mode === "browser"} />
+          </Panel>
+        </div>
+
+        <aside className="min-w-0 space-y-4">
+          <Panel title="Mission">
+            <MetricsStrip metrics={metrics} />
+          </Panel>
+          <Panel title="Rescue team" aside={<span className="text-[10px] text-faint">click to trace route</span>}>
+            <AgentRoster agents={agents} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} />
+          </Panel>
+          <Panel title="Triage queue" aside={<span className="text-[10px] text-faint">lowest health first</span>}>
+            <TriageQueue survivors={survivors} agents={agents} />
+          </Panel>
+          <Panel title="Mission log">
+            <EventFeed logs={state?.mission_logs ?? []} />
+          </Panel>
         </aside>
-    </main>
+      </main>
+    </div>
   );
 
-  if (!COPILOT_ENABLED) {
-    return content;
-  }
+  if (!COPILOT_ENABLED) return dashboard;
 
   return (
     <CopilotSidebar
-      defaultOpen
-      clickOutsideToClose={false}
+      defaultOpen={false}
+      clickOutsideToClose
       labels={{
         title: "Rescue Copilot",
-        initial:
-          "Mission Command online. I can inspect Redis Iris grid cells, highlight agents, assign tasks, and route rescuers.",
+        initial: "Mission command online. Ask me to run the autopilot, trigger an aftershock, or explain what an agent is doing.",
       }}
     >
-      {content}
+      <CopilotBridge agents={agents} survivors={survivors} metrics={metrics} run={run} onSelectAgent={setSelectedAgentId} />
+      {dashboard}
     </CopilotSidebar>
+  );
+}
+
+function Chip({ ok, label, title }: { ok: boolean; label: string; title?: string }) {
+  return (
+    <span
+      title={title}
+      className="flex items-center gap-1.5 rounded-full border border-line bg-panel px-2.5 py-1 font-mono text-muted"
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-ok" : "bg-faint"}`} />
+      {label}
+    </span>
   );
 }

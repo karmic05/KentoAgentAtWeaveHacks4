@@ -1,6 +1,7 @@
-import json
+import os
 import threading
 import time
+from pathlib import Path
 
 import weave
 from fastapi import FastAPI, HTTPException
@@ -14,22 +15,46 @@ from agents.autonomous_hive import (
 )
 from agents.agent_spawner import ensure_default_agents, spawn_agents
 from agents.coordinator import assign_best_agent
-from agents.field_agent import run_field_agents_tick
+from agents.field_agent import llm_status, run_field_agents_tick, warm_up_llm
 from agents.hive_orchestrator import HiveOrchestrator
 from agents.movement_simulator import assign_agent_to_survivor
+from agents.simulation import (
+    aftershock,
+    edit_cell,
+    get_metrics,
+    get_sim_state,
+    reset_scenario,
+    sim_tick,
+    start_autopilot,
+    stop_autopilot,
+    sync_from_cloud,
+)
 from agents.survivor_spawner import spawn_random_survivors
 from memory.redis_iris import (
     GRID_SIZE_X,
     GRID_SIZE_Y,
+    REDIS_BACKEND,
     get_all_agents,
-    get_grid_node,
+    get_recent_mission_logs,
     get_survivor,
+    log_mission_event,
     redis_client,
 )
 
-import os
+def _wandb_logged_in() -> bool:
+    if os.getenv("WANDB_API_KEY"):
+        return True
+    for name in (".netrc", "_netrc"):
+        netrc = Path.home() / name
+        if netrc.exists() and "api.wandb.ai" in netrc.read_text(errors="ignore"):
+            return True
+    return False
 
-if os.getenv("DISABLE_WEAVE", "").lower() not in ("1", "true", "yes"):
+
+# Weave tracing needs a W&B login; without one weave.init would block on an
+# interactive prompt, so only initialise when credentials are present.
+WEAVE_ENABLED = _wandb_logged_in() and os.getenv("DISABLE_WEAVE", "").lower() not in ("1", "true", "yes")
+if WEAVE_ENABLED:
     weave.init("kento-agent-hive")
 
 app = FastAPI()
@@ -69,6 +94,25 @@ class FieldAgentsRunRequest(BaseModel):
     max_ticks: int = 60
 
 
+class ScenarioRequest(BaseModel):
+    seed: int | None = None
+    survivors: int = 7
+    agents: int = 4
+    rubble: float = 0.16
+
+
+class AutopilotRequest(BaseModel):
+    running: bool
+    interval_ms: int = 450
+    aftershocks: bool = True
+
+
+class CellEditRequest(BaseModel):
+    x: int
+    y: int
+    tool: str
+
+
 SIM_PAUSED_KEY = "sim:paused"
 
 # Background field-agent run state. With LLM thinking enabled each tick costs an
@@ -94,7 +138,7 @@ def _field_agents_run_worker(max_ticks: int) -> None:
         _field_run["complete"] = complete
         _field_run["running"] = False
         redis_client.set(SIM_PAUSED_KEY, "0")
-        _log_mission_event(
+        log_mission_event(
             "api_field_agents_run_completed",
             {"ticks_run": ticks, "complete": complete,
              "active_survivors_remaining": _active_survivor_count()},
@@ -107,22 +151,12 @@ def _active_survivor_count() -> int:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-def _log_mission_event(event: str, data: dict) -> None:
-    timestamp_ns = time.time_ns()
-    redis_client.hset(
-        f"mission:log:{timestamp_ns}",
-        mapping={
-            "event": event,
-            "timestamp_ns": timestamp_ns,
-            "data": json.dumps(data, default=str),
-        },
-    )
 
 
 def _parse_int(value: str | int | None, default: int = 0) -> int:
@@ -150,34 +184,6 @@ def _get_survivors_from_redis():
         })
 
     return sorted(survivors, key=lambda survivor: survivor["id"])
-
-
-def _decode_mission_log_data(data: dict[str, str]) -> dict[str, str] | list | str:
-    raw_data = data.get("data")
-    if raw_data is None:
-        return data
-
-    try:
-        return json.loads(raw_data)
-    except json.JSONDecodeError:
-        return raw_data
-
-
-def _get_mission_logs_from_redis():
-    logs = []
-
-    for key in redis_client.scan_iter("mission:log:*"):
-        data = redis_client.hgetall(key)
-        timestamp_ns = _parse_int(data.get("timestamp_ns"))
-        logs.append({
-            "key": key,
-            "event": data.get("event", "unknown"),
-            "timestamp_ns": timestamp_ns,
-            "data": _decode_mission_log_data(data),
-            "raw": data,
-        })
-
-    return sorted(logs, key=lambda log: log["timestamp_ns"])
 
 
 @app.get("/grid-state")
@@ -218,8 +224,88 @@ def grid_state():
         "cells": cells,
         "survivors": _get_survivors_from_redis(),
         "agents": get_all_agents(),
-        "mission_logs": _get_mission_logs_from_redis(),
+        "mission_logs": get_recent_mission_logs(),
         "hive_status": get_hive_status(),
+        "metrics": get_metrics(),
+        "sim": get_sim_state(),
+        "llm": llm_status(),
+        "backups": [
+            redis_client.hgetall(key) for key in redis_client.scan_iter("backup:request:*")
+        ],
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "redis": REDIS_BACKEND,
+        "llm": llm_status(),
+        "weave": WEAVE_ENABLED,
+        "cloud_source": bool(os.getenv("KENTO_SOURCE_REDIS_HOST")),
+    }
+
+
+@app.post("/scenario/reset")
+def scenario_reset(request: ScenarioRequest):
+    result = reset_scenario(
+        seed=request.seed,
+        survivors=max(1, min(request.survivors, 16)),
+        agents=max(1, min(request.agents, 6)),
+        rubble=max(0.0, min(request.rubble, 0.3)),
+    )
+    return {"result": result, "grid_state": grid_state()}
+
+
+@app.post("/scenario/sync-cloud")
+def scenario_sync_cloud():
+    try:
+        result = sync_from_cloud()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Redis Cloud sync failed: {exc}") from exc
+    return {"result": result, "grid_state": grid_state()}
+
+
+@app.post("/sim/step")
+def sim_step():
+    result = sim_tick()
+    return {"result": {k: v for k, v in result.items() if k != "actions"}, "grid_state": grid_state()}
+
+
+@app.post("/sim/autopilot")
+def sim_autopilot(request: AutopilotRequest):
+    if request.running:
+        start_autopilot(max(120, min(request.interval_ms, 3000)), request.aftershocks)
+    else:
+        stop_autopilot()
+    return {"result": get_sim_state(), "grid_state": grid_state()}
+
+
+@app.post("/sim/aftershock")
+def sim_aftershock():
+    return {"result": aftershock(), "grid_state": grid_state()}
+
+
+@app.post("/grid/edit")
+def grid_edit(request: CellEditRequest):
+    if not (0 <= request.x < GRID_SIZE_X and 0 <= request.y < GRID_SIZE_Y):
+        raise HTTPException(status_code=400, detail="cell outside grid")
+    return {"result": edit_cell(request.x, request.y, request.tool), "grid_state": grid_state()}
+
+
+@app.post("/commander/plan")
+async def commander_plan():
+    """Run the LlamaIndex strategic commander (coordinate -> route -> dispatch)
+    without its tactical loop, so the autopilot animates the handoff."""
+    workflow = HiveOrchestrator(timeout=60)
+    result = await workflow.run(max_tactical_ticks=0)
+    return {
+        "result": {
+            "assignments": len(result.get("assignments", [])),
+            "dispatches": [d.get("dispatch_result") for d in result.get("dispatches", [])],
+            "errors": result.get("dispatch_errors", []) + result.get("route_errors", []),
+        },
+        "grid_state": grid_state(),
     }
 
 
@@ -233,7 +319,7 @@ async def orchestrate():
         result = await workflow.run()
     finally:
         redis_client.set(SIM_PAUSED_KEY, "0")
-    _log_mission_event("api_orchestrate_completed", {"result": result})
+    log_mission_event("api_orchestrate_completed", {"result": result})
 
     return {
         "result": result,
@@ -256,7 +342,7 @@ def assign_agent(request: AssignAgentRequest):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    _log_mission_event(
+    log_mission_event(
         "api_agent_assigned",
         {
             "agent_id": agent_id,
@@ -277,7 +363,7 @@ def spawn_survivors(request: SpawnSurvivorsRequest):
         raise HTTPException(status_code=400, detail="count must be at least 1")
 
     result = spawn_random_survivors(request.count)
-    _log_mission_event("api_random_survivors_spawned", result)
+    log_mission_event("api_random_survivors_spawned", result)
 
     return {
         "result": result,
@@ -288,7 +374,7 @@ def spawn_survivors(request: SpawnSurvivorsRequest):
 @app.post("/spawn-agents")
 def spawn_agents_endpoint(request: SpawnAgentsRequest):
     result = spawn_agents(request.agent_ids)
-    _log_mission_event("api_rescue_agents_spawned", {"count": len(result["spawned"])})
+    log_mission_event("api_rescue_agents_spawned", {"count": len(result["spawned"])})
 
     return {
         "result": result,
@@ -301,7 +387,7 @@ def simulation_mode(request: SimulationModeRequest):
     # Pauses/resumes the external live_inject_loop (which honours this Redis flag),
     # so field agents can own the survivor/grid keys without being overwritten.
     redis_client.set(SIM_PAUSED_KEY, "1" if request.paused else "0")
-    _log_mission_event("api_simulation_mode", {"paused": request.paused})
+    log_mission_event("api_simulation_mode", {"paused": request.paused})
     return {"paused": request.paused, "grid_state": grid_state()}
 
 
@@ -332,7 +418,7 @@ def field_agents_run(request: FieldAgentsRunRequest):
             target=_field_agents_run_worker, args=(request.max_ticks,), daemon=True
         ).start()
 
-    _log_mission_event("api_field_agents_run_started", {"max_ticks": request.max_ticks})
+    log_mission_event("api_field_agents_run_started", {"max_ticks": request.max_ticks})
     return {
         "result": {"status": "started", "max_ticks": request.max_ticks},
         "grid_state": grid_state(),
@@ -357,7 +443,7 @@ def assign_nearest_agent(request: AssignNearestAgentRequest):
         raise HTTPException(status_code=400, detail="survivor_id is required")
 
     result = assign_best_agent(survivor_id)
-    _log_mission_event("api_nearest_agent_assignment_completed", result)
+    log_mission_event("api_nearest_agent_assignment_completed", result)
 
     return {
         "result": result,
@@ -368,7 +454,7 @@ def assign_nearest_agent(request: AssignNearestAgentRequest):
 @app.post("/tick-all-agents")
 def tick_all_agents():
     tick = run_autonomous_tick()
-    _log_mission_event("api_autonomous_simulation_tick_completed", tick)
+    log_mission_event("api_autonomous_simulation_tick_completed", tick)
 
     return {
         "tick": tick,
@@ -422,7 +508,7 @@ def mission_status():
         "mission_logs": len(current_grid_state["mission_logs"]),
         "hive_status": current_grid_state["hive_status"],
     }
-    _log_mission_event("api_mission_status_requested", status)
+    log_mission_event("api_mission_status_requested", status)
 
     return {
         "status": status,
@@ -450,8 +536,15 @@ async def run_hive_dispatch(request: HiveDispatchRequest):
     }
 
 
-# Seed default rescue agents (A, B, C) on startup so they appear on the grid.
+# A fresh in-memory store starts empty, so generate a scenario to land on.
+# Against a real Redis, keep whatever the pipeline injected and just make sure
+# the default rescue agents exist.
 try:
-    ensure_default_agents()
+    if REDIS_BACKEND == "in-memory":
+        reset_scenario(seed=int(os.getenv("KENTO_SEED", "1337")))
+    else:
+        ensure_default_agents()
 except Exception as exc:  # don't block API startup if Redis is briefly unavailable
-    print(f"[api_server] agent seeding skipped: {exc}")
+    print(f"[api_server] startup seeding skipped: {exc}")
+
+warm_up_llm()

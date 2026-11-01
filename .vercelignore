@@ -1,0 +1,20 @@
+# The Vercel deployment is the Next.js dashboard only; the hive runs in the
+# browser there. Never upload secrets or the Python stack.
+.env
+.env*
+*.local.txt
+__pycache__/
+*.pyc
+venv/
+.venv/
+api/
+agents/
+memory/
+evals/
+data_pipeline/
+*.py
+requirements.txt
+kento_raw_map_data.zip
+scripts/
+.next/
+node_modules/

@@ -1,10 +1,9 @@
-import json
 import random
 import re
-import time
 from typing import Any
 
 from memory.redis_iris import (
+    log_mission_event,
     GRID_SIZE_X,
     GRID_SIZE_Y,
     get_all_agents,
@@ -22,16 +21,6 @@ def _xy_to_cell(x: int, y: int) -> int:
     return y * GRID_SIZE_X + x
 
 
-def _log_mission_event(event: str, data: dict[str, Any]) -> None:
-    timestamp_ns = time.time_ns()
-    redis_client.hset(
-        f"mission:log:{timestamp_ns}",
-        mapping={
-            "event": event,
-            "timestamp_ns": timestamp_ns,
-            "data": json.dumps(data, default=str),
-        },
-    )
 
 
 def _occupied_agent_cells() -> set[int]:
@@ -149,6 +138,6 @@ def spawn_random_survivors(count: int) -> dict[str, Any]:
         "spawned": spawned,
         "available_cells_remaining": len(find_clear_grid_cells()),
     }
-    _log_mission_event("random_survivors_spawned", result)
+    log_mission_event("random_survivors_spawned", result)
 
     return result

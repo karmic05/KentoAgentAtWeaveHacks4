@@ -1,15 +1,12 @@
-import json
-import time
 from typing import Any
 
-import weave
 from llama_index.core.workflow import Event, StartEvent, StopEvent, Workflow, step
 
 from agents.coordinator import orchestrate_rescue_operations
-from agents.field_agent import _live_survivors, run_field_agents_tick
+from agents.field_agent import INACTIVE_STATUSES, _live_survivors, run_field_agents_tick
 from agents.rescue_agent import dispatch_rescue
 from agents.route_agent import plan_route
-from memory.redis_iris import redis_client
+from memory.redis_iris import log_mission_event
 
 # Tactical tick budget the strategic commander oversees per run.
 MAX_TACTICAL_TICKS = 80
@@ -27,16 +24,6 @@ class RescueDispatchEvent(Event):
     summary: dict[str, Any]
 
 
-def _log_mission_event(event: str, data: dict[str, Any]) -> None:
-    timestamp_ns = time.time_ns()
-    redis_client.hset(
-        f"mission:log:{timestamp_ns}",
-        mapping={
-            "event": event,
-            "timestamp_ns": timestamp_ns,
-            "data": json.dumps(data, default=str),
-        },
-    )
 
 
 def _survivors_by_id(summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -47,8 +34,13 @@ class HiveOrchestrator(Workflow):
 
     @step
     async def coordinate(self, ev: StartEvent) -> CoordinatorEvent:
-        summary = orchestrate_rescue_operations()
-        _log_mission_event("coordination_completed", summary)
+        # max_tactical_ticks=0 makes the commander plan and assign only, leaving
+        # execution to the dashboard autopilot so the rescue animates live.
+        summary = {
+            **orchestrate_rescue_operations(),
+            "max_tactical_ticks": ev.get("max_tactical_ticks", MAX_TACTICAL_TICKS),
+        }
+        log_mission_event("coordination_completed", summary)
 
         return CoordinatorEvent(summary=summary)
 
@@ -95,7 +87,7 @@ class HiveOrchestrator(Workflow):
             "route_plans": route_plans,
             "route_errors": route_errors,
         }
-        _log_mission_event("route_planning_completed", summary)
+        log_mission_event("route_planning_completed", summary)
 
         return RoutePlanEvent(summary=summary)
 
@@ -137,7 +129,7 @@ class HiveOrchestrator(Workflow):
             "dispatches": dispatches,
             "dispatch_errors": dispatch_errors,
         }
-        _log_mission_event("rescue_dispatch_completed", summary)
+        log_mission_event("rescue_dispatch_completed", summary)
 
         return RescueDispatchEvent(summary=summary)
 
@@ -148,10 +140,10 @@ class HiveOrchestrator(Workflow):
         # -> act -> report: rerouting around rubble, rescuing, and calling for
         # backup until every survivor is rescued (or the tactical budget is spent).
         def active() -> int:
-            return sum(1 for s in _live_survivors().values() if s.get("status") != "rescued")
+            return sum(1 for s in _live_survivors().values() if s.get("status") not in INACTIVE_STATUSES)
 
         ticks = 0
-        for _ in range(MAX_TACTICAL_TICKS):
+        for _ in range(ev.summary["max_tactical_ticks"]):
             if active() == 0:
                 break
             run_field_agents_tick()
@@ -163,6 +155,6 @@ class HiveOrchestrator(Workflow):
             "active_survivors_remaining": active(),
             "complete": active() == 0,
         }
-        _log_mission_event("movement_tick_completed", summary)
+        log_mission_event("movement_tick_completed", summary)
 
         return StopEvent(result=summary)

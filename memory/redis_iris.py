@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -14,15 +15,80 @@ REDIS_HOST = os.getenv("REDIS_CLOUD_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_CLOUD_PORT", 6379))
 REDIS_PASSWORD = os.getenv("REDIS_CLOUD_PASSWORD", "")
 
+# KENTO_REDIS=auto (default): use the configured Redis if it answers a PING,
+# otherwise fall back to an in-process fakeredis so the hive runs with zero infra.
+# KENTO_REDIS=memory forces the in-process store; KENTO_REDIS=remote forbids it.
+REDIS_MODE = os.getenv("KENTO_REDIS", "auto").lower()
+
 GRID_SIZE_X = 10
 GRID_SIZE_Y = 10
 
-redis_client = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    password=REDIS_PASSWORD,
-    decode_responses=True,
-)
+MISSION_LOG_MAX = 300
+
+
+def _connect() -> tuple[redis.Redis, str]:
+    if REDIS_MODE != "memory":
+        client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            password=REDIS_PASSWORD,
+            decode_responses=True,
+            socket_connect_timeout=2,
+        )
+        try:
+            client.ping()
+            return client, f"redis://{REDIS_HOST}:{REDIS_PORT}"
+        except redis.RedisError as exc:
+            if REDIS_MODE == "remote":
+                raise
+            print(f"[redis_iris] {REDIS_HOST}:{REDIS_PORT} unreachable ({exc}); using in-memory Redis")
+
+    import fakeredis
+
+    return fakeredis.FakeRedis(decode_responses=True), "in-memory"
+
+
+redis_client, REDIS_BACKEND = _connect()
+
+
+def log_mission_event(event: str, data: Mapping[str, Any]) -> None:
+    """Append to the mission log, pruning the oldest entries past MISSION_LOG_MAX."""
+    timestamp_ns = time.time_ns()
+    key = f"mission:log:{timestamp_ns}"
+    redis_client.hset(
+        key,
+        mapping={"event": event, "timestamp_ns": timestamp_ns, "data": json.dumps(data, default=str)},
+    )
+    redis_client.zadd("mission:log:index", {key: timestamp_ns})
+    overflow = redis_client.zcard("mission:log:index") - MISSION_LOG_MAX
+    if overflow > 0:
+        stale = redis_client.zrange("mission:log:index", 0, overflow - 1)
+        redis_client.delete(*stale)
+        redis_client.zrem("mission:log:index", *stale)
+
+
+def get_recent_mission_logs(limit: int = 60) -> list[dict[str, Any]]:
+    keys = redis_client.zrange("mission:log:index", -limit, -1)
+    if not keys:
+        return []
+    pipe = redis_client.pipeline()
+    for key in keys:
+        pipe.hgetall(key)
+    logs = []
+    for key, raw in zip(keys, pipe.execute()):
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw.get("data", "null"))
+        except json.JSONDecodeError:
+            data = raw.get("data")
+        logs.append({
+            "key": key,
+            "event": raw.get("event", "unknown"),
+            "timestamp_ns": int(raw.get("timestamp_ns", 0)),
+            "data": data,
+        })
+    return logs
 
 
 def _survivor_key(survivor_id: str) -> str:
@@ -131,7 +197,10 @@ def render_grid() -> list[list[str]]:
 
 def clear_simulation() -> int:
     keys_to_delete = []
-    for pattern in ("grid:node:*", "live:survivor:*", "agent:*", "mission:log:*", "hive:status"):
+    for pattern in (
+        "grid:node:*", "live:survivor:*", "agent:*", "mission:log:*", "hive:*",
+        "backup:request:*", "sim:*",
+    ):
         keys_to_delete.extend(redis_client.scan_iter(match=pattern))
 
     if not keys_to_delete:

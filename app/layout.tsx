@@ -15,9 +15,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rescue Hive Dashboard",
-  description: "Multi-agent disaster response simulation",
+  title: "Kento · Rescue Hive",
+  description:
+    "Autonomous multi-agent disaster response: Snowflake + dbt data, Redis hot memory, a LlamaIndex commander and tactical field agents.",
 };
+
+// The CopilotKit runtime needs a working LLM key, so the provider (and its
+// /api/copilotkit calls) only mounts when the Copilot is explicitly enabled.
+const COPILOT_ENABLED = process.env.NEXT_PUBLIC_COPILOT_ENABLED === "true";
 
 export default function RootLayout({
   children,
@@ -29,10 +34,8 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <CopilotKit runtimeUrl="/api/copilotkit">
-          {children}
-        </CopilotKit>
+      <body className="min-h-full">
+        {COPILOT_ENABLED ? <CopilotKit runtimeUrl="/api/copilotkit" enableInspector={false} showDevConsole={false}>{children}</CopilotKit> : children}
       </body>
     </html>
   );
