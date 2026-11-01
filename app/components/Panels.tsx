@@ -17,12 +17,12 @@ import {
 
 export function Panel({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-line bg-panel">
-      <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{title}</h2>
-        {aside}
+    <section className="rounded-2xl border border-line bg-panel">
+      <header className="flex items-center justify-between px-4 pt-3.5">
+        <h2 className="label">{title}</h2>
+        {aside && <span className="text-[11px] text-faint">{aside}</span>}
       </header>
-      <div className="p-4">{children}</div>
+      <div className="px-4 pb-4 pt-3">{children}</div>
     </section>
   );
 }
@@ -40,19 +40,19 @@ export function MetricsStrip({ metrics }: { metrics: Metrics }) {
   ];
   return (
     <div>
-      <div className="grid grid-cols-4 gap-2">
-        {items.map((item) => (
-          <div key={item.label} className="rounded-lg border border-line bg-panel-2 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-wider text-faint">{item.label}</p>
-            <p className={`tabular mt-0.5 text-2xl font-semibold ${item.tone}`}>{item.value}</p>
+      <div className="grid grid-cols-4 divide-x divide-line">
+        {items.map((item, index) => (
+          <div key={item.label} className={index === 0 ? "pr-3" : "px-3"}>
+            <p className={`tabular text-[26px] font-semibold leading-none tracking-tight ${item.tone}`}>{item.value}</p>
+            <p className="mt-1.5 text-[11px] text-faint">{item.label}</p>
           </div>
         ))}
       </div>
-      <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-panel-2" aria-label="Mission progress">
-        <div className="bg-ok transition-all duration-500" style={{ width: `${total ? (rescued / total) * 100 : 0}%` }} />
-        <div className="bg-danger transition-all duration-500" style={{ width: `${total ? (lost / total) * 100 : 0}%` }} />
+      <div className="mt-4 flex h-1 overflow-hidden rounded-full bg-white/[0.06]" aria-label="Mission progress">
+        <div className="bg-ok transition-[width] duration-500 ease-out" style={{ width: `${total ? (rescued / total) * 100 : 0}%` }} />
+        <div className="bg-danger transition-[width] duration-500 ease-out" style={{ width: `${total ? (lost / total) * 100 : 0}%` }} />
       </div>
-      <dl className="tabular mt-3 grid grid-cols-4 gap-2 text-[11px] text-muted">
+      <dl className="tabular mt-4 grid grid-cols-4 gap-2 text-[11px]">
         <Stat label="distance" value={metrics.distance ?? 0} />
         <Stat label="reroutes" value={metrics.reroutes ?? 0} />
         <Stat label="backups" value={metrics.backup_requests ?? 0} />
@@ -65,8 +65,8 @@ export function MetricsStrip({ metrics }: { metrics: Metrics }) {
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
+      <dd className="font-mono text-[13px] text-text">{value}</dd>
       <dt className="text-faint">{label}</dt>
-      <dd className="text-sm font-medium text-text">{value}</dd>
     </div>
   );
 }
@@ -81,7 +81,7 @@ export function AgentRoster({
   onSelect: (id: string | null) => void;
 }) {
   return (
-    <ul className="space-y-2">
+    <ul className="-mx-2 divide-y divide-line">
       {agents.map((agent) => {
         const color = agentColor(agent.id);
         const selected = agent.id === selectedAgentId;
@@ -90,29 +90,27 @@ export function AgentRoster({
             <button
               type="button"
               onClick={() => onSelect(selected ? null : agent.id)}
-              className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                selected ? "border-accent/60 bg-accent/5" : "border-line bg-panel-2 hover:border-line-strong"
+              className={`w-full rounded-lg px-2 py-2.5 text-left transition-colors duration-150 ${
+                selected ? "bg-white/[0.05]" : "hover:bg-white/[0.03]"
               }`}
             >
               <div className="flex items-center gap-2.5">
                 <span
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md font-mono text-xs font-bold text-[#05080c]"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] font-mono text-[11px] font-bold text-[#0b0b0a]"
                   style={{ background: color }}
                 >
                   {agent.id}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{agent.status}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{agent.status}</span>
                 <span
-                  className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase ${
-                    agent.brain === "llm" ? "bg-accent/15 text-accent" : "bg-white/5 text-faint"
-                  }`}
+                  className={`font-mono text-[10px] ${agent.brain === "llm" ? "text-accent" : "text-faint"}`}
                   title={agent.brain === "llm" ? "Decided by the LLM, validated by guardrails" : "Decided by the deterministic planner"}
                 >
                   {agent.brain === "llm" ? "llm" : "rules"}
                 </span>
               </div>
-              {agent.thought && <p className="mt-1.5 text-xs leading-relaxed text-muted">{agent.thought}</p>}
-              <p className="tabular mt-1.5 font-mono text-[10px] text-faint">
+              {agent.thought && <p className="mt-1 pl-[30px] text-xs leading-relaxed text-muted">{agent.thought}</p>}
+              <p className="tabular mt-1 pl-[30px] font-mono text-[10px] text-faint">
                 ({agent.x},{agent.y}) · {agent.rescues ?? 0} rescued · {agent.distance ?? 0} cells moved
               </p>
             </button>
@@ -129,13 +127,13 @@ export function TriageQueue({ survivors, agents }: { survivors: Survivor[]; agen
     return <p className="text-sm text-faint">No active survivors. Generate a scenario or drop one on the map.</p>;
   }
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-3">
       {sorted.map((survivor) => {
         const value = health(survivor);
         const trapped = isTrapped(survivor.status);
         const responders = agents.filter((a) => a.target_survivor_id === survivor.id);
         return (
-          <li key={survivor.id} className="rounded-lg border border-line bg-panel-2 px-3 py-2">
+          <li key={survivor.id}>
             <div className="flex items-center justify-between gap-2 text-sm">
               <span className="flex items-center gap-2">
                 <span className={`font-mono text-xs font-semibold ${trapped ? "text-danger" : "text-warn"}`}>
@@ -149,7 +147,7 @@ export function TriageQueue({ survivors, agents }: { survivors: Survivor[]; agen
                 {responders.map((a) => (
                   <span
                     key={a.id}
-                    className="flex h-4 w-4 items-center justify-center rounded font-mono text-[9px] font-bold text-[#05080c]"
+                    className="flex h-4 w-4 items-center justify-center rounded font-mono text-[9px] font-bold text-[#0b0b0a]"
                     style={{ background: agentColor(a.id) }}
                   >
                     {a.id}
@@ -158,9 +156,9 @@ export function TriageQueue({ survivors, agents }: { survivors: Survivor[]; agen
               </span>
             </div>
             <div className="mt-1.5 flex items-center gap-2">
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/40">
+              <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
                 <div
-                  className="h-full rounded-full transition-all duration-500"
+                  className="h-full rounded-full transition-[width] duration-500 ease-out"
                   style={{ width: `${value}%`, background: healthColor(value) }}
                 />
               </div>
@@ -178,14 +176,14 @@ const TONE: Record<string, string> = {
   warn: "bg-warn",
   danger: "bg-danger",
   agent: "bg-accent",
-  info: "bg-[#a78bfa]",
+  info: "bg-[#b4a2f5]",
   muted: "bg-faint",
 };
 
 export function EventFeed({ logs }: { logs: MissionLog[] }) {
   const recent = [...logs].reverse().slice(0, 40);
   return (
-    <ol className="scroll-thin max-h-72 space-y-1.5 overflow-y-auto pr-1">
+    <ol className="scroll-thin max-h-72 space-y-2 overflow-y-auto pr-1">
       {recent.length === 0 && <li className="text-sm text-faint">Waiting for mission events…</li>}
       {recent.map((entry) => {
         const { tone, text } = describeLog(entry);
@@ -197,7 +195,7 @@ export function EventFeed({ logs }: { logs: MissionLog[] }) {
         return (
           <li key={entry.key} className="feed-enter flex items-start gap-2 text-xs leading-relaxed">
             <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${TONE[tone] ?? TONE.muted}`} />
-            <span className="flex-1 text-text/90">{text}</span>
+            <span className="flex-1 text-muted">{text}</span>
             <span className="tabular shrink-0 font-mono text-[10px] text-faint">{time}</span>
           </li>
         );
@@ -249,11 +247,11 @@ export function Pipeline({ health: status, sim, browser }: { health: Health | nu
     },
   ];
   return (
-    <ol className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 xl:grid-cols-7">
+    <ol className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4 xl:grid-cols-7">
       {stages.map((stage, index) => (
-        <li key={stage.name} className="rounded-lg border border-line bg-panel-2 px-2.5 py-2">
+        <li key={stage.name} className="border-l border-line pl-3">
           <p className="font-mono text-[9px] text-faint">{String(index + 1).padStart(2, "0")}</p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium">
+          <p className="mt-1 flex items-center gap-1.5 text-xs font-medium">
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${stage.live ? "bg-ok" : "bg-faint"}`} />
             {stage.name}
           </p>

@@ -102,12 +102,12 @@ export async function api<T = unknown>(path: string, body?: unknown): Promise<Ap
 }
 
 export const AGENT_COLORS: Record<string, string> = {
-  A: "#38bdf8",
-  B: "#a78bfa",
-  C: "#34d399",
-  D: "#f472b6",
-  E: "#a3e635",
-  F: "#818cf8",
+  A: "#7cc4f2",
+  B: "#b4a2f5",
+  C: "#6fd6a6",
+  D: "#f0a0c8",
+  E: "#c6e07a",
+  F: "#8fa3f7",
 };
 
 export function agentColor(id: string): string {

@@ -78,7 +78,7 @@ export function GridMap({
 
   return (
     <div
-      className="relative aspect-square w-full select-none overflow-hidden rounded-xl border border-line bg-ground"
+      className="relative aspect-square w-full select-none overflow-hidden rounded-2xl border border-line bg-ground"
       style={{ ["--move-ms" as string]: `${moveMs}ms` }}
     >
       {/* terrain */}
@@ -96,7 +96,7 @@ export function GridMap({
               onClick={() => (tool === "none" ? onSelectAgent(null) : onCellClick(x, y))}
               title={`(${x}, ${y}) ${type ?? "open ground"}${cell?.node.severity ? ` · ${cell.node.severity}` : ""}`}
               className={`rounded-[3px] ${tileClass(index, byCell)} ${freshRubble.has(index) ? "tile-rubble-fresh" : ""} ${
-                tool === "none" ? "cursor-default" : "cursor-crosshair hover:outline hover:outline-1 hover:outline-accent/70"
+                tool === "none" ? "cursor-default" : "cursor-crosshair hover:outline hover:outline-1 hover:outline-accent/60"
               }`}
             />
           );
@@ -144,7 +144,7 @@ export function GridMap({
         >
           <span
             className="burst absolute h-[70%] w-[70%] rounded-full border-2"
-            style={{ borderColor: `var(--${flash.tone})`, boxShadow: `0 0 16px var(--${flash.tone})` }}
+            style={{ borderColor: `var(--${flash.tone})` }}
           />
         </div>
       ))}
@@ -183,7 +183,7 @@ export function GridMap({
             >
               <span
                 className="flex h-[78%] w-[78%] items-center justify-center rounded-full text-[clamp(7px,1.1vw,11px)] font-bold"
-                style={{ background: "#0b0f15", color: tone, boxShadow: `0 0 10px ${tone}55` }}
+                style={{ background: "var(--ground)", color: tone }}
               >
                 {trapped ? "T" : "+"}
               </span>
@@ -201,18 +201,20 @@ export function GridMap({
             key={agent.id}
             type="button"
             onClick={() => onSelectAgent(selected ? null : agent.id)}
-            className="agent-token absolute z-10 flex items-center justify-center"
-            style={{ left: pct(agent.x), top: pct(agent.y), width: pct(1), height: pct(1) }}
+            className="agent-token absolute left-0 top-0 z-10 flex items-center justify-center"
+            // translate % is relative to the token's own size, i.e. one grid cell.
+            style={{ width: pct(1), height: pct(1), transform: `translate(${agent.x * 100}%, ${agent.y * 100}%)` }}
             aria-label={`Agent ${agent.id}: ${agent.status}`}
             title={`Agent ${agent.id} · ${agent.status}`}
           >
             <span
-              className="flex h-[58%] w-[58%] items-center justify-center rounded-[30%] font-mono text-[clamp(8px,1.2vw,12px)] font-bold text-[#05080c]"
+              className="agent-chip flex h-[58%] w-[58%] items-center justify-center rounded-[30%] font-mono text-[clamp(8px,1.2vw,12px)] font-bold text-[#0b0b0a]"
               style={{
                 background: color,
-                boxShadow: selected ? `0 0 0 2px #fff, 0 0 18px ${color}` : `0 0 12px ${color}88`,
-                transform: agent.last_action === "rescue" ? "scale(1.18)" : undefined,
-                transition: "transform 200ms, box-shadow 200ms",
+                boxShadow: selected
+                  ? "0 0 0 2px var(--bg), 0 0 0 3.5px var(--text)"
+                  : "0 1px 0 rgba(255,255,255,0.25) inset, 0 2px 4px rgba(0,0,0,0.6)",
+                transform: agent.last_action === "rescue" ? "scale(1.12)" : undefined,
               }}
             >
               {agent.id}

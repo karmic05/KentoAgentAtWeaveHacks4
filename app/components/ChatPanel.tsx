@@ -110,10 +110,12 @@ export function ChatPanel({
     <div className="flex flex-col">
       <ol ref={list} className="scroll-thin max-h-64 min-h-32 space-y-2 overflow-y-auto pr-1" aria-live="polite">
         {messages.map((m) => (
-          <li key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <li key={m.id} className={`rise flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
-              className={`max-w-[88%] rounded-lg px-3 py-2 text-xs leading-relaxed ${
-                m.role === "user" ? "bg-accent text-[#04121c]" : "border border-line bg-panel-2 text-text/90"
+              className={`max-w-[88%] rounded-xl px-3 py-2 text-[13px] leading-relaxed ${
+                m.role === "user"
+                  ? "rounded-br-sm bg-accent font-medium text-[var(--accent-ink)]"
+                  : "rounded-bl-sm bg-panel-2 text-text/85"
               } ${m.pending ? "animate-pulse" : ""}`}
             >
               {m.text}
@@ -129,7 +131,7 @@ export function ChatPanel({
               key={s}
               type="button"
               onClick={() => send(s)}
-              className="rounded-full border border-line-strong px-2.5 py-1 text-[11px] text-muted hover:border-accent hover:text-accent"
+              className="btn h-7 rounded-full px-2.5 text-[11px] font-normal text-muted"
             >
               {s}
             </button>
@@ -142,7 +144,7 @@ export function ChatPanel({
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. send agent C to S-02 and start"
           aria-label="Message Rescue Command"
-          className="min-w-0 flex-1 rounded-lg border border-line-strong bg-panel-2 px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-accent"
+          className="field min-w-0 flex-1 text-sm"
         />
         <button type="submit" className="btn btn-primary" disabled={busy || !input.trim()}>
           Send

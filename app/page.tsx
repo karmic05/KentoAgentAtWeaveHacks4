@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { type EditTool, type Flash, GridMap } from "./components/GridMap";
+import { IntroDialog } from "./components/IntroDialog";
 import { AgentRoster, EventFeed, MetricsStrip, Panel, Pipeline, TriageQueue } from "./components/Panels";
 import type { ChatAction } from "./lib/commands";
 import { BrowserHive } from "./lib/engine";
@@ -29,6 +30,7 @@ export default function Home() {
   const [tool, setTool] = useState<EditTool>("none");
   const [speed, setSpeed] = useState(1);
   const [seed, setSeed] = useState("");
+  const [introSignal, setIntroSignal] = useState(0);
 
   const running = state?.sim.running ?? false;
 
@@ -211,9 +213,15 @@ export default function Home() {
     <div className="min-h-screen bg-bg text-text">
       <header className="border-b border-line">
         <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 md:px-6">
-          <div className="flex items-baseline gap-3">
-            <h1 className="font-mono text-lg font-bold tracking-[0.2em]">KENTO</h1>
-            <p className="text-sm text-muted">Autonomous disaster-response hive</p>
+          <div className="flex items-center gap-3">
+            <h1 className="flex items-center gap-2 font-mono text-[15px] font-bold tracking-[0.22em]">
+              <span className="h-2 w-2 rounded-[2px] bg-accent" aria-hidden />
+              KENTO
+            </h1>
+            <p className="hidden text-sm text-muted sm:block">Autonomous disaster-response hive</p>
+            <button type="button" className="btn btn-ghost h-7 px-2 text-xs" onClick={() => setIntroSignal((n) => n + 1)}>
+              About
+            </button>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px]">
             <Chip
@@ -233,23 +241,10 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1500px] gap-4 px-4 py-4 md:px-6 lg:grid-cols-[minmax(0,1fr)_400px]">
-        <div className="min-w-0 space-y-4">
-          {mode === "browser" && (
-            <div className="rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm text-muted">
-              <span className="font-medium text-accent">Live demo.</span> The hive is running entirely in your
-              browser with the deterministic planner. The full stack (Snowflake → dbt → Redis, the LlamaIndex
-              commander, the local Ollama LLM advisor, and Weave tracing) runs locally.{" "}
-              <a
-                className="text-accent underline-offset-2 hover:underline"
-                href="https://github.com/karmic05/KentoAgentAtWeaveHacks4/tree/kento-command-center"
-              >
-                See the code on GitHub
-              </a>
-              .
-            </div>
-          )}
+      <IntroDialog openSignal={introSignal} />
 
+      <main className="mx-auto grid max-w-[1500px] gap-5 px-4 py-5 md:px-6 lg:grid-cols-[minmax(0,1fr)_400px]">
+        <div className="min-w-0 space-y-4">
           {offline && (
             <div className="rounded-xl border border-warn/40 bg-warn/5 px-4 py-3 text-sm text-warn">
               Can&apos;t reach the hive API ({offline}). Start it with{" "}
@@ -278,7 +273,7 @@ export default function Home() {
               />
               {complete && !running && (
                 <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
-                  <div className="pointer-events-auto rounded-xl border border-ok/40 bg-[#07130f]/95 px-5 py-3 text-center shadow-2xl backdrop-blur">
+                  <div className="rise pointer-events-auto rounded-xl border border-ok/30 bg-[#0d1410]/95 px-5 py-3 text-center shadow-[0_12px_40px_rgba(0,0,0,0.5)] backdrop-blur">
                     <p className="text-sm font-semibold text-ok">Mission complete</p>
                     <p className="tabular mt-0.5 text-xs text-muted">
                       {metrics.rescued}/{metrics.total} rescued · {metrics.lost} lost · {metrics.tick} ticks ·{" "}
@@ -291,22 +286,23 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="btn btn-primary min-w-28 justify-center" onClick={toggleAutopilot} disabled={complete && !running}>
-              {running ? "❚❚ Pause" : "▶ Autopilot"} <span className="kbd !border-[#04121c]/30 !text-[#04121c]/70">space</span>
+            <button type="button" className="btn btn-primary min-w-[7.5rem]" onClick={toggleAutopilot} disabled={complete && !running}>
+              {running ? "Pause" : "Autopilot"} <span className="kbd">space</span>
             </button>
             <button type="button" className="btn" onClick={step} disabled={running || complete}>
               Step <span className="kbd">s</span>
             </button>
-            <div className="flex overflow-hidden rounded-lg border border-line-strong">
+            <div className="flex h-8 items-center gap-0.5 rounded-lg border border-line-strong bg-panel-2 px-[3px]" role="group" aria-label="Speed">
               {SPEEDS.map((option, index) => (
                 <button
                   key={option.label}
                   type="button"
+                  aria-pressed={speed === index}
                   onClick={() => {
                     setSpeed(index);
                     if (running) run("/sim/autopilot", { running: true, interval_ms: option.ms, aftershocks: state?.sim.aftershocks ?? true }).catch(() => {});
                   }}
-                  className={`px-2.5 py-1.5 font-mono text-xs ${speed === index ? "bg-accent/15 text-accent" : "bg-panel-2 text-muted hover:text-text"}`}
+                  className="seg"
                 >
                   {option.label}
                 </button>
@@ -325,26 +321,7 @@ export default function Home() {
             <button type="button" className="btn" onClick={() => run("/sim/aftershock").catch(() => {})}>
               Trigger aftershock
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => run("/commander/plan").catch(() => {})}
-              disabled={busy === "/commander/plan"}
-              title="Run the LlamaIndex workflow: coordinate → route planning → guarded dispatch"
-            >
-              {busy === "/commander/plan" ? "Commander planning…" : "Run commander"}
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-panel px-3 py-2.5">
-            <span className="text-[11px] uppercase tracking-wider text-faint">Scenario</span>
-            <input
-              value={seed}
-              onChange={(e) => setSeed(e.target.value.replace(/\D/g, "").slice(0, 7))}
-              placeholder="random seed"
-              aria-label="Scenario seed"
-              className="w-28 rounded-md border border-line-strong bg-panel-2 px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
-            />
+            <span className="mx-1 hidden h-5 w-px bg-line-strong sm:block" />
             <button
               type="button"
               className="btn"
@@ -352,17 +329,39 @@ export default function Home() {
             >
               New disaster
             </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-panel px-3 py-2.5">
+            <span className="label mr-1">Scenario</span>
+            <input
+              value={seed}
+              onChange={(e) => setSeed(e.target.value.replace(/\D/g, "").slice(0, 7))}
+              placeholder="random seed"
+              aria-label="Scenario seed"
+              className="field w-28 font-mono text-xs"
+            />
             <button
               type="button"
               className="btn"
-              onClick={() => run("/scenario/sync-cloud").catch(() => {})}
-              disabled={!status?.cloud_source || busy === "/scenario/sync-cloud"}
-              title={status?.cloud_source ? "Load the latest Snowflake → dbt marts from Redis Cloud" : "Set KENTO_SOURCE_REDIS_* in .env"}
+              onClick={() => run("/commander/plan").catch(() => {})}
+              disabled={busy === "/commander/plan"}
+              title="Strategic commander: assign every idle agent to the nearest survivor"
             >
-              {busy === "/scenario/sync-cloud" ? "Syncing…" : "Sync from Redis Cloud"}
+              {busy === "/commander/plan" ? "Planning…" : "Run commander"}
             </button>
+            {status?.cloud_source && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => run("/scenario/sync-cloud").catch(() => {})}
+                disabled={busy === "/scenario/sync-cloud"}
+                title="Load the latest Snowflake → dbt marts from Redis Cloud"
+              >
+                {busy === "/scenario/sync-cloud" ? "Syncing…" : "Sync from Redis Cloud"}
+              </button>
+            )}
             <span className="mx-1 hidden h-5 w-px bg-line-strong sm:block" />
-            <span className="text-[11px] uppercase tracking-wider text-faint">Edit map</span>
+            <span className="label mr-1">Edit map</span>
             {(["rubble", "survivor"] as const).map((option) => (
               <button
                 key={option}
@@ -390,16 +389,16 @@ export default function Home() {
         </div>
 
         <aside className="min-w-0 space-y-4">
-          <Panel title="Rescue command" aside={<span className="text-[10px] text-faint">chat with the hive</span>}>
+          <Panel title="Rescue command" aside="chat with the hive">
             <ChatPanel state={state} execute={executeActions} />
           </Panel>
           <Panel title="Mission">
             <MetricsStrip metrics={metrics} />
           </Panel>
-          <Panel title="Rescue team" aside={<span className="text-[10px] text-faint">click to trace route</span>}>
+          <Panel title="Rescue team" aside="click to trace a route">
             <AgentRoster agents={agents} selectedAgentId={selectedAgentId} onSelect={setSelectedAgentId} />
           </Panel>
-          <Panel title="Triage queue" aside={<span className="text-[10px] text-faint">lowest health first</span>}>
+          <Panel title="Triage queue" aside="lowest health first">
             <TriageQueue survivors={survivors} agents={agents} />
           </Panel>
           <Panel title="Mission log">

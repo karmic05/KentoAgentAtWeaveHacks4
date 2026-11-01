@@ -1,23 +1,27 @@
 @import "tailwindcss";
 
+/* Warm graphite with one accent: international orange, the colour of rescue gear. */
 :root {
-  --bg: #07090d;
-  --panel: #0d1118;
-  --panel-2: #121823;
-  --line: #1e2633;
-  --line-strong: #2b3546;
-  --text: #e6ebf2;
-  --muted: #8691a3;
-  --faint: #566074;
-  --accent: #38bdf8;
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #f87171;
-  --ground: #0b0e14;
-  --road: #161c27;
-  --building: #1c2432;
-  --rubble-a: #3a3128;
+  --bg: #0b0b0a;
+  --panel: #121211;
+  --panel-2: #191917;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --text: #ecebe6;
+  --muted: #9b9a92;
+  --faint: #66655e;
+  --accent: #ff5f1f;
+  --accent-ink: #1a0a03;
+  --ok: #5fd38d;
+  --warn: #f2c14e;
+  --danger: #ff5d5d;
+  --ground: #0f0f0e;
+  --road: #1d1d1b;
+  --rubble-a: #3b3229;
   --rubble-b: #2a241e;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 @theme inline {
@@ -45,97 +49,108 @@ body {
 
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(255, 95, 31, 0.35);
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
+/* Section labels: small mono caps, the one typographic accent of the page. */
+.label {
+  font-family: var(--font-geist-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
 /* --- map tiles ------------------------------------------------------------ */
 .tile-ground {
   background:
-    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.035) 1px, transparent 1.5px) 0 0 / 9px 9px,
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.03) 1px, transparent 1.5px) 0 0 / 9px 9px,
     var(--ground);
 }
 
 /* asphalt with a faint dashed lane marking */
 .tile-road {
   background:
-    repeating-linear-gradient(90deg, rgba(226, 232, 240, 0.28) 0 6px, transparent 6px 12px) center / 100% 1px no-repeat,
-    #222a38;
+    repeating-linear-gradient(90deg, rgba(236, 235, 230, 0.22) 0 6px, transparent 6px 12px) center / 100% 1px no-repeat,
+    var(--road);
 }
 
 .tile-road-v {
   background:
-    repeating-linear-gradient(0deg, rgba(226, 232, 240, 0.28) 0 6px, transparent 6px 12px) center / 1px 100% no-repeat,
-    #222a38;
+    repeating-linear-gradient(0deg, rgba(236, 235, 230, 0.22) 0 6px, transparent 6px 12px) center / 1px 100% no-repeat,
+    var(--road);
 }
 
 /* raised block with a window grid */
 .tile-building {
   background:
-    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px) 0 0 / 7px 7px,
-    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px) 0 0 / 7px 7px,
-    linear-gradient(160deg, #2a3446, #1f2736);
-  box-shadow: inset 0 0 0 1px #364257, 0 2px 0 rgba(0, 0, 0, 0.45);
+    linear-gradient(rgba(236, 235, 230, 0.05) 1px, transparent 1px) 0 0 / 7px 7px,
+    linear-gradient(90deg, rgba(236, 235, 230, 0.05) 1px, transparent 1px) 0 0 / 7px 7px,
+    linear-gradient(165deg, #2a2a27, #212120);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 2px 0 rgba(0, 0, 0, 0.5);
 }
 
 .tile-rubble {
-  background: repeating-linear-gradient(
-    135deg,
-    var(--rubble-a) 0 5px,
-    var(--rubble-b) 5px 10px
-  );
-  box-shadow: inset 0 0 0 1px #4a3d30;
+  background: repeating-linear-gradient(135deg, var(--rubble-a) 0 5px, var(--rubble-b) 5px 10px);
+  box-shadow: inset 0 0 0 1px rgba(255, 200, 150, 0.08);
 }
 
+/* Aftershocks are rare, so a collapse gets a moment of emphasis. */
 .tile-rubble-fresh {
-  animation: collapse 700ms ease-out;
+  animation: collapse 520ms var(--ease-out);
 }
 
 @keyframes collapse {
-  0% {
-    transform: scale(1.18);
-    filter: brightness(2.2);
-  }
-  100% {
-    transform: scale(1);
-    filter: brightness(1);
+  from {
+    transform: scale(1.12);
+    filter: brightness(1.8);
   }
 }
 
 /* --- markers -------------------------------------------------------------- */
+/* Agents move with transform (GPU), one cell = 100% of their own size. */
 .agent-token {
-  transition:
-    left var(--move-ms, 420ms) cubic-bezier(0.33, 1, 0.68, 1),
-    top var(--move-ms, 420ms) cubic-bezier(0.33, 1, 0.68, 1);
+  transition: transform var(--move-ms, 420ms) var(--ease-out);
+  will-change: transform;
+}
+
+.agent-chip {
+  transition: transform 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
 }
 
 .burst {
-  animation: burst 1.4s ease-out forwards;
+  animation: burst 1.2s var(--ease-out) forwards;
 }
 
 @keyframes burst {
-  0% {
-    transform: scale(0.4);
+  from {
+    transform: scale(0.5);
     opacity: 1;
   }
-  100% {
-    transform: scale(2.4);
+  to {
+    transform: scale(2.2);
     opacity: 0;
   }
 }
 
 .pulse-ring {
-  animation: pulse-ring 1.6s ease-out infinite;
+  animation: pulse-ring 1.6s var(--ease-out) infinite;
 }
 
 @keyframes pulse-ring {
-  0% {
+  from {
     transform: scale(0.6);
-    opacity: 0.9;
+    opacity: 0.8;
   }
-  100% {
+  to {
     transform: scale(1.7);
     opacity: 0;
   }
@@ -147,10 +162,7 @@ body {
 
 @keyframes beacon {
   from {
-    opacity: 0.35;
-  }
-  to {
-    opacity: 1;
+    opacity: 0.3;
   }
 }
 
@@ -165,19 +177,64 @@ body {
   }
 }
 
+/* Log lines arrive constantly; a short fade is enough. */
 .feed-enter {
-  animation: feed-enter 320ms ease-out;
+  animation: fade-in 180ms ease-out;
 }
 
-@keyframes feed-enter {
+@keyframes fade-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
   }
-  to {
-    opacity: 1;
-    transform: none;
+}
+
+/* Mission-complete card and chat messages enter from slightly below. */
+.rise {
+  transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px);
   }
+}
+
+/* --- intro dialog ----------------------------------------------------------- */
+.intro {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity 220ms var(--ease-out),
+    transform 220ms var(--ease-out),
+    overlay 220ms allow-discrete,
+    display 220ms allow-discrete;
+
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Exit is faster than entry. */
+.intro:not([open]) {
+  opacity: 0;
+  transform: scale(0.98);
+  transition-duration: 140ms;
+}
+
+.intro::backdrop {
+  background: rgba(5, 5, 4, 0.72);
+  transition:
+    background 220ms var(--ease-out),
+    overlay 220ms allow-discrete,
+    display 220ms allow-discrete;
+
+  @starting-style {
+    background: rgba(5, 5, 4, 0);
+  }
+}
+
+.intro:not([open])::backdrop {
+  background: rgba(5, 5, 4, 0);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -185,11 +242,14 @@ body {
   .pulse-ring,
   .beacon,
   .route-dash,
-  .feed-enter,
   .tile-rubble-fresh,
   .burst {
     animation: none;
     transition: none;
+  }
+  .intro,
+  .rise {
+    transform: none;
   }
 }
 
@@ -197,63 +257,122 @@ body {
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.45rem;
+  height: 2rem;
   border-radius: 0.5rem;
   border: 1px solid var(--line-strong);
   background: var(--panel-2);
-  padding: 0.45rem 0.75rem;
+  padding: 0 0.8rem;
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--text);
+  white-space: nowrap;
   transition:
-    background 120ms,
-    border-color 120ms,
-    transform 80ms;
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 160ms var(--ease-out);
 }
 
-.btn:hover:not(:disabled) {
-  background: #18202d;
-  border-color: #3a4659;
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) {
+    background: #20201e;
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #ff7438;
+    border-color: #ff7438;
+  }
 }
 
 .btn:active:not(:disabled) {
   transform: scale(0.97);
 }
 
+.btn:focus-visible,
+.seg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #04121c;
+  color: var(--accent-ink);
   font-weight: 600;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: #5cc9fa;
-  border-color: #5cc9fa;
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
 }
 
 .btn-on {
-  border-color: var(--accent);
+  border-color: rgba(255, 95, 31, 0.55);
   color: var(--accent);
-  background: rgba(56, 189, 248, 0.08);
+  background: rgba(255, 95, 31, 0.08);
+}
+
+/* Segmented control (speed). */
+.seg {
+  height: 1.75rem;
+  padding: 0 0.6rem;
+  border-radius: 0.375rem;
+  font-family: var(--font-geist-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.seg[aria-pressed="true"] {
+  background: #2a2a27;
+  color: var(--text);
 }
 
 .kbd {
-  border: 1px solid var(--line-strong);
-  border-bottom-width: 2px;
+  border: 1px solid currentColor;
   border-radius: 4px;
   padding: 0 4px;
   font-family: var(--font-geist-mono);
-  font-size: 0.65rem;
-  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.2;
+  opacity: 0.55;
+}
+
+.field {
+  height: 2rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  padding: 0 0.7rem;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.field::placeholder {
+  color: var(--faint);
+}
+
+.field:focus {
+  border-color: rgba(255, 95, 31, 0.6);
 }
 
 .scroll-thin {
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+}
+
+/* A disabled primary reads as unavailable, not as a faded accent. */
+.btn-primary:disabled {
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+  color: var(--faint);
+  opacity: 1;
 }
