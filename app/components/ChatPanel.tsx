@@ -82,7 +82,9 @@ export function ChatPanel({
       const results = await execute(data.actions ?? []);
       replace(pending, {
         role: "bot",
-        text: [data.reply, ...results].filter(Boolean).join(" ") || "I couldn't find anything to do with that.",
+        // The panel renders plain text, so drop markdown emphasis the model adds.
+        text: [String(data.reply ?? "").replace(/\*\*?([^*]+)\*\*?/g, "$1"), ...results].filter(Boolean).join(" ")
+          || "I couldn't find anything to do with that.",
         source: data.model,
       });
     } catch (error) {
