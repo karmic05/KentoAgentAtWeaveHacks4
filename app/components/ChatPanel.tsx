@@ -82,9 +82,12 @@ export function ChatPanel({
       const results = await execute(data.actions ?? []);
       replace(pending, {
         role: "bot",
-        // The panel renders plain text, so drop markdown emphasis the model adds.
-        text: [String(data.reply ?? "").replace(/\*\*?([^*]+)\*\*?/g, "$1"), ...results].filter(Boolean).join(" ")
-          || "I couldn't find anything to do with that.",
+        // The model already summarises what it did, so only append failures to
+        // its reply. The panel renders plain text, so drop markdown emphasis.
+        text: (data.reply
+          ? [String(data.reply).replace(/\*\*?([^*]+)\*\*?/g, "$1"), ...results.filter((r) => /^(Couldn't|Can't|Failed)/.test(r))]
+          : results
+        ).filter(Boolean).join(" ") || "I couldn't find anything to do with that.",
         source: data.model,
       });
     } catch (error) {
